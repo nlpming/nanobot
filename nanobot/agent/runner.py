@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from nanobot.agent.debug_log import print_thought, print_action, print_observation
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.providers.base import LLMProvider, ToolCallRequest
@@ -101,6 +102,7 @@ class AgentRunner:
             context.tool_calls = list(response.tool_calls)
 
             if response.has_tool_calls:
+                print_thought(response.content or "")
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=True)
 
@@ -111,6 +113,9 @@ class AgentRunner:
                     thinking_blocks=response.thinking_blocks,
                 ))
                 tools_used.extend(tc.name for tc in response.tool_calls)
+
+                for tc in response.tool_calls:
+                    print_action(tc.name, tc.arguments)
 
                 await hook.before_execute_tools(context)
 
@@ -126,6 +131,7 @@ class AgentRunner:
                     await hook.after_iteration(context)
                     break
                 for tool_call, result in zip(response.tool_calls, results):
+                    print_observation(tool_call.name, str(result) if result else "")
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
