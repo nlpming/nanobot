@@ -102,7 +102,6 @@ class AgentRunner:
             context.tool_calls = list(response.tool_calls)
 
             if response.has_tool_calls:
-                print_thought(response.content or "")
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=True)
 

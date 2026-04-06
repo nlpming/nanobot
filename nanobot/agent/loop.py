@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from loguru import logger
 
+from nanobot.agent.debug_log import print_thought, print_action, print_observation
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.memory import MemoryConsolidator
@@ -243,10 +244,9 @@ class AgentLoop:
 
             async def before_execute_tools(self, context: AgentHookContext) -> None:
                 if on_progress:
-                    if not on_stream:
-                        thought = loop_self._strip_think(context.response.content if context.response else None)
-                        if thought:
-                            await on_progress(thought)
+                    thought = loop_self._strip_think(context.response.content if context.response else None)
+                    if thought:
+                        await on_progress(thought)
                     tool_hint = loop_self._strip_think(loop_self._tool_hint(context.tool_calls))
                     await on_progress(tool_hint, tool_hint=True)
                 for tc in context.tool_calls:
@@ -255,7 +255,10 @@ class AgentLoop:
                 loop_self._set_tool_context(channel, chat_id, message_id)
 
             def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
-                return loop_self._strip_think(content)
+                content = loop_self._strip_think(content)
+                if content:
+                    print_thought(content)
+                return content
 
         result = await self.runner.run(AgentRunSpec(
             initial_messages=initial_messages,
