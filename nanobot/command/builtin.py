@@ -9,7 +9,7 @@ import sys
 from nanobot import __version__
 from nanobot.bus.events import OutboundMessage
 from nanobot.command.router import CommandContext, CommandRouter
-from nanobot.utils.helpers import build_status_content
+from nanobot.utils.helpers import build_context_content, build_status_content
 
 
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
@@ -82,6 +82,64 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     )
 
 
+async def cmd_context(ctx: CommandContext) -> OutboundMessage:
+    """Show per-category token breakdown of the current context window."""
+    from nanobot.utils.helpers import estimate_message_tokens, estimate_prompt_tokens
+
+    loop = ctx.loop
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+
+    # System prompt (identity + bootstrap + memory), excluding skills
+    try:
+        full_prompt = loop.context.build_system_prompt()
+        skills_section = loop.context.build_skills_section()
+        core_prompt = full_prompt.replace(skills_section, "").strip() if skills_section else full_prompt
+        system_tokens = estimate_prompt_tokens([{"role": "system", "content": core_prompt}])
+    except Exception:
+        system_tokens = 0
+
+    # Skills section of the system prompt
+    try:
+        skills_tokens = estimate_prompt_tokens([{"role": "system", "content": skills_section}]) if skills_section else 0
+    except Exception:
+        skills_tokens = 0
+
+    # Built-in tools (non-MCP)
+    try:
+        tools_tokens = estimate_prompt_tokens([], loop.tools.get_builtin_definitions())
+    except Exception:
+        tools_tokens = 0
+
+    # MCP tools
+    try:
+        mcp_tokens = estimate_prompt_tokens([], loop.tools.get_mcp_definitions())
+    except Exception:
+        mcp_tokens = 0
+
+    # Session messages
+    try:
+        history = session.get_history(max_messages=0)
+        messages_tokens = sum(estimate_message_tokens(m) for m in history)
+    except Exception:
+        messages_tokens = 0
+
+    content = build_context_content(
+        model=loop.model,
+        system_tokens=system_tokens,
+        skills_tokens=skills_tokens,
+        tools_tokens=tools_tokens,
+        mcp_tokens=mcp_tokens,
+        messages_tokens=messages_tokens,
+        context_window_tokens=loop.context_window_tokens,
+    )
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=content,
+        metadata={"render_as": "text"},
+    )
+
+
 async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     """Return available slash commands."""
     lines = [
@@ -90,6 +148,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
         "/stop — Stop the current task",
         "/restart — Restart the bot",
         "/status — Show bot status",
+        "/context — Show context window token usage",
         "/help — Show available commands",
     ]
     return OutboundMessage(
@@ -107,4 +166,5 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.priority("/status", cmd_status)
     router.exact("/new", cmd_new)
     router.exact("/status", cmd_status)
+    router.exact("/context", cmd_context)
     router.exact("/help", cmd_help)

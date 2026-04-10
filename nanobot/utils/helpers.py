@@ -281,6 +281,59 @@ def build_status_content(
     ])
 
 
+def build_context_content(
+    *,
+    model: str,
+    system_tokens: int,
+    skills_tokens: int,
+    tools_tokens: int,
+    mcp_tokens: int,
+    messages_tokens: int,
+    context_window_tokens: int,
+) -> str:
+    """Build a context window token-usage breakdown for display."""
+    total = system_tokens + skills_tokens + tools_tokens + mcp_tokens + messages_tokens
+    free = max(0, context_window_tokens - total)
+    ctx = context_window_tokens or 1
+
+    def _k(n: int) -> str:
+        return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+    def _pct(n: int) -> str:
+        return f"{n / ctx * 100:.1f}%"
+
+    bar_w = 38
+    filled = round(total / ctx * bar_w)
+    bar = "█" * filled + "░" * (bar_w - filled)
+    total_pct = int(total / ctx * 100)
+
+    rows = [
+        ("System prompt", system_tokens),
+        ("Skills",        skills_tokens),
+        ("Tools",         tools_tokens),
+        ("MCP tools",     mcp_tokens),
+        ("Messages",      messages_tokens),
+        ("Free space",    free),
+    ]
+    col_w = 14
+    lines = [
+        f"Context Usage — {_k(total)}/{_k(context_window_tokens)} ({total_pct}%)",
+        "",
+        f"  [{bar}]",
+        "",
+        f"  {'Category':<{col_w}}  {'Tokens':>8}   {'Window %':>8}",
+        f"  {'─' * col_w}  {'─' * 8}   {'─' * 8}",
+    ]
+    for label, n in rows:
+        lines.append(f"  {label:<{col_w}}  {_k(n):>8}   {_pct(n):>8}")
+    lines += [
+        "",
+        f"  Model:   {model}",
+        f"  Window:  {_k(context_window_tokens)} tokens",
+    ]
+    return "\n".join(lines)
+
+
 def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]:
     """Sync bundled templates to workspace. Only creates missing files."""
     from importlib.resources import files as pkg_files

@@ -35,6 +35,14 @@ class ToolRegistry:
         """Get all tool definitions in OpenAI format."""
         return [tool.to_schema() for tool in self._tools.values()]
 
+    def get_builtin_definitions(self) -> list[dict[str, Any]]:
+        """Get definitions for non-MCP tools."""
+        return [tool.to_schema() for name, tool in self._tools.items() if not name.startswith("mcp_")]
+
+    def get_mcp_definitions(self) -> list[dict[str, Any]]:
+        """Get definitions for MCP-wrapped tools."""
+        return [tool.to_schema() for name, tool in self._tools.items() if name.startswith("mcp_")]
+
     async def execute(self, name: str, params: dict[str, Any]) -> Any:
         """Execute a tool by name with given parameters."""
         _HINT = "\n\n[Analyze the error above and try a different approach.]"

@@ -54,6 +54,21 @@ Skills with available="false" need dependencies installed first - you can try in
 
         return "\n\n---\n\n".join(parts)
 
+    def build_skills_section(self) -> str:
+        """Build just the skills portion of the system prompt for token estimation."""
+        parts = []
+        always_skills = self.skills.get_always_skills()
+        if always_skills:
+            always_content = self.skills.load_skills_for_context(always_skills)
+            if always_content:
+                parts.append(f"# Active Skills\n\n{always_content}")
+        skills_summary = self.skills.build_skills_summary()
+        if skills_summary:
+            parts.append(
+                f"# Skills\n\nThe following skills extend your capabilities.\n\n{skills_summary}"
+            )
+        return "\n\n---\n\n".join(parts)
+
     def _get_identity(self) -> str:
         """Get the core identity section."""
         workspace_path = str(self.workspace.expanduser().resolve())
