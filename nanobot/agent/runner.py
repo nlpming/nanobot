@@ -12,6 +12,25 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.providers.base import LLMProvider, ToolCallRequest
 from nanobot.utils.helpers import build_assistant_message
 
+def _extract_thought(response) -> str | None:
+    """Extract thought/reasoning content from an LLM response for console display."""
+    if not response:
+        return None
+    if response.reasoning_content:
+        return response.reasoning_content
+    if response.thinking_blocks:
+        thoughts = []
+        for block in response.thinking_blocks:
+            if block.get("type") == "thinking":
+                thoughts.append(block.get("thinking", ""))
+            elif "thought" in block:
+                thoughts.append(block.get("thought", ""))
+        if thoughts:
+            return "\n".join(thoughts)
+    from nanobot.utils.helpers import extract_think
+    return extract_think(response.content)
+
+
 _DEFAULT_MAX_ITERATIONS_MESSAGE = (
     "I reached the maximum number of tool call iterations ({max_iterations}) "
     "without completing the task. You can try breaking the task into smaller steps."
@@ -113,6 +132,9 @@ class AgentRunner:
                 ))
                 tools_used.extend(tc.name for tc in response.tool_calls)
 
+                _thought = _extract_thought(response)
+                if _thought:
+                    print_thought(_thought)
                 for tc in response.tool_calls:
                     print_action(tc.name, tc.arguments)
 

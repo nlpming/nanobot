@@ -190,6 +190,25 @@ class AgentLoop:
         return strip_think(text) or None
 
     @staticmethod
+    def _extract_thought(response) -> str | None:
+        """Extract thought/reasoning content from LLM response."""
+        if not response:
+            return None
+        if response.reasoning_content:
+            return response.reasoning_content
+        if response.thinking_blocks:
+            thoughts = []
+            for block in response.thinking_blocks:
+                if block.get("type") == "thinking":
+                    thoughts.append(block.get("thinking", ""))
+                elif "thought" in block:
+                    thoughts.append(block.get("thought", ""))
+            if thoughts:
+                return "\n".join(thoughts)
+        from nanobot.utils.helpers import extract_think
+        return extract_think(response.content)
+
+    @staticmethod
     def _tool_hint(tool_calls: list) -> str:
         """Format tool calls as concise hint, e.g. 'web_search("query")'."""
         def _fmt(tc):
@@ -244,7 +263,7 @@ class AgentLoop:
 
             async def before_execute_tools(self, context: AgentHookContext) -> None:
                 if on_progress:
-                    thought = loop_self._strip_think(context.response.content if context.response else None)
+                    thought = loop_self._extract_thought(context.response)
                     if thought:
                         await on_progress(thought)
                     tool_hint = loop_self._strip_think(loop_self._tool_hint(context.tool_calls))
@@ -256,8 +275,6 @@ class AgentLoop:
 
             def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
                 content = loop_self._strip_think(content)
-                if content:
-                    print_thought(content)
                 return content
 
         result = await self.runner.run(AgentRunSpec(

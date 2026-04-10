@@ -18,6 +18,18 @@ def strip_think(text: str) -> str:
     return text.strip()
 
 
+def extract_think(text: str | None) -> str | None:
+    """Extract all <think>...</think> blocks from text and return them as a single string."""
+    if not text:
+        return None
+    import re
+    matches = re.findall(r"<think>[\s\S]*?</think>", text)
+    if not matches:
+        return None
+    result = "\n".join(matches)
+    return result.strip() or None
+
+
 def detect_image_mime(data: bytes) -> str | None:
     """Detect image MIME type from magic bytes, ignoring file extension."""
     if data[:8] == b"\x89PNG\r\n\x1a\n":
