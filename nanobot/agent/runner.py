@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from datetime import datetime
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from nanobot.agent.debug_log import print_thought, print_action, print_observation
@@ -54,6 +57,7 @@ class AgentRunSpec:
     max_iterations_message: str | None = None
     concurrent_tools: bool = False
     fail_on_tool_error: bool = False
+    session_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -72,8 +76,31 @@ class AgentRunResult:
 class AgentRunner:
     """Run a tool-capable LLM loop without product-layer concerns."""
 
-    def __init__(self, provider: LLMProvider):
+    def __init__(self, provider: LLMProvider, debug_dir: Path | None = None):
         self.provider = provider
+        self._debug_dir = debug_dir
+
+    def _save_request(
+        self, iteration: int, model: str, messages: list, tools: list, session_id: str | None
+    ) -> None:
+        """Append the current LLM request payload to debug/requests_<session_id>.jsonl."""
+        if self._debug_dir is None:
+            return
+        try:
+            self._debug_dir.mkdir(parents=True, exist_ok=True)
+            safe_sid = (session_id or "default").replace(":", "_").replace("/", "_").replace(" ", "_")
+            record = {
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "model": model,
+                "iteration": iteration,
+                "messages": messages,
+                "tools": tools,
+            }
+            log_file = self._debug_dir / f"requests_{safe_sid}.jsonl"
+            with log_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
 
     async def run(self, spec: AgentRunSpec) -> AgentRunResult:
         hook = spec.hook or AgentHook()
@@ -99,6 +126,8 @@ class AgentRunner:
                 kwargs["max_tokens"] = spec.max_tokens
             if spec.reasoning_effort is not None:
                 kwargs["reasoning_effort"] = spec.reasoning_effort
+
+            self._save_request(iteration, spec.model, messages, kwargs["tools"], spec.session_id)
 
             if hook.wants_streaming():
                 async def _stream(delta: str) -> None:

@@ -90,7 +90,7 @@ class AgentLoop:
         self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
-        self.runner = AgentRunner(provider)
+        self.runner = AgentRunner(provider, debug_dir=workspace / "debug")
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -263,9 +263,6 @@ class AgentLoop:
 
             async def before_execute_tools(self, context: AgentHookContext) -> None:
                 if on_progress:
-                    thought = loop_self._extract_thought(context.response)
-                    if thought:
-                        await on_progress(thought)
                     tool_hint = loop_self._strip_think(loop_self._tool_hint(context.tool_calls))
                     await on_progress(tool_hint, tool_hint=True)
                 for tc in context.tool_calls:
@@ -285,6 +282,7 @@ class AgentLoop:
             hook=_LoopHook(),
             error_message="Sorry, I encountered an error calling the AI model.",
             concurrent_tools=True,
+            session_id=f"{channel}:{chat_id}",
         ))
         self._last_usage = result.usage
         if result.stop_reason == "max_iterations":

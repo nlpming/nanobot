@@ -19,14 +19,13 @@ def strip_think(text: str) -> str:
 
 
 def extract_think(text: str | None) -> str | None:
-    """Extract all <think>...</think> blocks from text and return them as a single string."""
+    """Extract all <think>...</think> blocks and return their inner content."""
     if not text:
         return None
-    import re
-    matches = re.findall(r"<think>[\s\S]*?</think>", text)
+    matches = re.findall(r"<think>([\s\S]*?)</think>", text)
     if not matches:
         return None
-    result = "\n".join(matches)
+    result = "\n".join(m.strip() for m in matches)
     return result.strip() or None
 
 

@@ -762,9 +762,9 @@ def agent(
 
     async def _cli_progress(content: str, *, tool_hint: bool = False) -> None:
         ch = agent_loop.channels_config
-        if ch and tool_hint and not ch.send_tool_hints:
+        if tool_hint and not (ch and ch.send_tool_hints):
             return
-        if ch and not tool_hint and not ch.send_progress:
+        if not tool_hint and ch and not ch.send_progress:
             return
         _print_cli_progress_line(content, _thinking)
 
@@ -844,9 +844,9 @@ def agent(
                         if msg.metadata.get("_progress"):
                             is_tool_hint = msg.metadata.get("_tool_hint", False)
                             ch = agent_loop.channels_config
-                            if ch and is_tool_hint and not ch.send_tool_hints:
+                            if is_tool_hint and not (ch and ch.send_tool_hints):
                                 pass
-                            elif ch and not is_tool_hint and not ch.send_progress:
+                            elif not is_tool_hint and ch and not ch.send_progress:
                                 pass
                             else:
                                 await _print_interactive_progress_line(msg.content, _thinking)

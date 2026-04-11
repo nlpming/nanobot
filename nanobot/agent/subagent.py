@@ -45,7 +45,7 @@ class SubagentManager:
         self.web_proxy = web_proxy
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
-        self.runner = AgentRunner(provider)
+        self.runner = AgentRunner(provider, debug_dir=workspace / "debug")
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
 
@@ -130,6 +130,7 @@ class SubagentManager:
                 max_iterations_message="Task completed but no final response was generated.",
                 error_message=None,
                 fail_on_tool_error=True,
+                session_id=f"subagent_{task_id}",
             ))
             if result.stop_reason == "tool_error":
                 await self._announce_result(
