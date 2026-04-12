@@ -66,11 +66,14 @@ nanobot agent -c ~/.nanobot-work/config.json  # 使用指定配置
 
 | 命令 | 说明 |
 |------|------|
-| `/new` | 开启新会话（清除当前对话历史） |
-| `/stop` | 取消当前正在执行的任务 |
+| `/new` | 开启新会话（清除当前对话历史，旧消息异步归档到 HISTORY.md） |
+| `/stop` | 取消当前正在执行的任务（包括所有子 agent） |
 | `/restart` | 重启 nanobot 进程 |
 | `/status` | 显示运行状态（模型、token 用量、uptime） |
-| `/context` | 显示 context window token 占用明细 |
+| `/context` | 显示 context window token 占用明细（system prompt / skills / tools / 消息） |
+| `/skills` | 列出所有可用 skill（workspace 自定义 📁 + 内置 📦，标注 `[always]` 和不可用原因） |
+| `/agents` | 列出所有自定义子 agent（名称、描述、模型、工具列表） |
+| `/mcp` | 列出配置的 MCP 服务器及其注册工具（✅ 已连接 / ❌ 未连接） |
 | `/help` | 显示所有可用命令 |
 | `exit` / `quit` / `/exit` / `:q` | 退出交互模式 |
 

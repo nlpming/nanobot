@@ -1,4 +1,4 @@
-ca# nanobot System Prompt 组成结构
+# nanobot System Prompt 组成结构
 
 system prompt 由 `ContextBuilder.build_system_prompt()` 在每次 LLM 调用前动态组装，各部分以 `\n\n---\n\n` 分隔，按顺序拼接。
 
