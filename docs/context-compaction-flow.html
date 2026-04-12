@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <title>nanobot 上下文自动压缩流程</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+      background: #0a0e1a;
+      color: #e2e8f0;
+      padding: 44px 24px 60px;
+    }
+
+    /* ── Header ─────────────────────────────────── */
+    .page-header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+    .page-header h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #f1f5f9;
+      letter-spacing: 0.01em;
+    }
+    .page-header p {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #475569;
+    }
+
+    /* ── Root container ──────────────────────────── */
+    .flow {
+      max-width: 820px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* ── Generic connector ───────────────────────── */
+    .conn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .conn-line {
+      width: 2px;
+      background: #1e293b;
+    }
+    .conn-label {
+      font-size: 11px;
+      color: #475569;
+      padding: 3px 0;
+      white-space: nowrap;
+    }
+    .conn-arrow {
+      width: 0; height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid #1e293b;
+    }
+
+    /* ── Pill / badge helpers ────────────────────── */
+    .badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      padding: 2px 9px;
+      border-radius: 20px;
+    }
+
+    /* ── Trigger ─────────────────────────────────── */
+    .trigger-box {
+      background: #111827;
+      border: 1px solid #1f2d42;
+      border-radius: 12px;
+      padding: 14px 36px;
+      text-align: center;
+    }
+    .trigger-box .label {
+      font-size: 11px;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+    .trigger-box .title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #94a3b8;
+    }
+
+    /* ── Section card ────────────────────────────── */
+    .card {
+      width: 100%;
+      border-radius: 16px;
+      border: 1px solid;
+      overflow: hidden;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 13px 18px;
+    }
+    .card-header .step-num {
+      font-size: 12px;
+      font-weight: 800;
+      color: #64748b;
+      flex-shrink: 0;
+    }
+    .card-header .step-title {
+      font-size: 14px;
+      font-weight: 600;
+      flex: 1;
+    }
+    .card-header .step-fn {
+      font-size: 11px;
+      font-family: "JetBrains Mono", "SF Mono", monospace;
+      color: #475569;
+      white-space: nowrap;
+    }
+    .card-body {
+      padding: 14px 18px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* card themes */
+    .card-trigger  { border-color: #1e3a5f; }
+    .card-trigger .card-header  { background: #0c1e33; }
+    .card-trigger .step-title   { color: #7dd3fc; }
+
+    .card-detect   { border-color: #1e3a5f; }
+    .card-detect .card-header  { background: #0c1e33; }
+    .card-detect .step-title   { color: #7dd3fc; }
+
+    .card-budget   { border-color: #164e63; }
+    .card-budget .card-header  { background: #0a2535; }
+    .card-budget .step-title   { color: #67e8f9; }
+
+    .card-loop     { border-color: #065f46; }
+    .card-loop .card-header    { background: #022c20; }
+    .card-loop .step-title     { color: #6ee7b7; }
+
+    .card-llm      { border-color: #6d28d9; }
+    .card-llm .card-header     { background: #2e1065; }
+    .card-llm .step-title      { color: #c4b5fd; }
+
+    .card-persist  { border-color: #92400e; }
+    .card-persist .card-header { background: #3b1a05; }
+    .card-persist .step-title  { color: #fcd34d; }
+
+    .card-cursor   { border-color: #065f46; }
+    .card-cursor .card-header  { background: #022c20; }
+    .card-cursor .step-title   { color: #6ee7b7; }
+
+    .card-resume   { border-color: #1e3a5f; }
+    .card-resume .card-header  { background: #0c1e33; }
+    .card-resume .step-title   { color: #7dd3fc; }
+
+    /* ── Inner section ───────────────────────────── */
+    .inner {
+      background: #111827;
+      border-radius: 10px;
+      padding: 11px 14px;
+    }
+    .inner-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #475569;
+      margin-bottom: 7px;
+    }
+    .inner-body {
+      font-size: 12.5px;
+      line-height: 1.65;
+      color: #94a3b8;
+    }
+
+    /* ── Code block ──────────────────────────────── */
+    pre {
+      background: #070d18;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 10px 13px;
+      font-size: 12px;
+      font-family: "JetBrains Mono", "Fira Code", "SF Mono", monospace;
+      color: #94a3b8;
+      white-space: pre-wrap;
+      line-height: 1.55;
+    }
+    pre .kw  { color: #67e8f9; }
+    pre .op  { color: #f9a8d4; }
+    pre .num { color: #fca5a5; }
+    pre .str { color: #86efac; }
+    pre .cmt { color: #334155; font-style: italic; }
+    pre .hi  { color: #fbbf24; font-weight: 600; }
+
+    /* ── Two-col ─────────────────────────────────── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    /* ── Decision diamond ────────────────────────── */
+    .decision-wrap {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .diamond-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-top: 2px;
+      flex-shrink: 0;
+    }
+    .diamond {
+      width: 56px; height: 56px;
+      transform: rotate(45deg);
+      border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .diamond-inner {
+      transform: rotate(-45deg);
+      font-size: 11px;
+      font-weight: 700;
+      text-align: center;
+      line-height: 1.2;
+      color: #fff;
+    }
+    .branch-list {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      flex: 1;
+    }
+    .branch {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      background: #070d18;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+    .bl { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+    .bl-ok    { background: #14532d; color: #86efac; }
+    .bl-over  { background: #7f1d1d; color: #fca5a5; }
+    .bl-none  { background: #1c1917; color: #a8a29e; }
+    .bl-fail  { background: #3b1a05; color: #fcd34d; }
+    .bl-done  { background: #0c1a30; color: #7dd3fc; }
+    .branch-text { font-size: 12.5px; color: #64748b; }
+
+    /* ── Token gauge ─────────────────────────────── */
+    .gauge-row { display: grid; grid-template-columns: 90px 1fr 60px; align-items: center; gap: 8px; margin: 4px 0; }
+    .gauge-row .gl { font-size: 11px; color: #64748b; text-align: right; }
+    .gauge-track { background: #1e293b; border-radius: 4px; height: 8px; overflow: hidden; }
+    .gauge-fill  { height: 100%; border-radius: 4px; }
+    .gauge-row .gv { font-size: 11px; color: #94a3b8; font-family: monospace; }
+
+    /* ── File badge ──────────────────────────────── */
+    .file-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+    .file-tag {
+      display: flex; align-items: center; gap: 6px;
+      background: #0a0e1a;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 7px 12px;
+      flex: 1; min-width: 200px;
+    }
+    .file-icon { font-size: 18px; }
+    .file-info { display: flex; flex-direction: column; gap: 2px; }
+    .file-name { font-size: 12px; font-family: monospace; color: #7dd3fc; }
+    .file-desc { font-size: 11px; color: #475569; }
+
+    /* ── Degraded path ───────────────────────────── */
+    .degrade {
+      width: 100%;
+      background: #1c0a04;
+      border: 1px dashed #92400e;
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .degrade-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #fcd34d;
+      margin-bottom: 8px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .degrade-body { font-size: 12px; color: #78716c; line-height: 1.6; }
+
+    /* ── Outcome ─────────────────────────────────── */
+    .outcome-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
+    .outcome {
+      border-radius: 12px;
+      padding: 16px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .out-ok { background: #052e16; border: 1px solid #166534; }
+    .out-loop { background: #0c1e33; border: 1px solid #1e3a5f; }
+    .outcome-icon { font-size: 22px; }
+    .outcome-title { font-size: 13px; font-weight: 600; }
+    .out-ok .outcome-title   { color: #86efac; }
+    .out-loop .outcome-title { color: #7dd3fc; }
+    .outcome-desc { font-size: 11.5px; color: #475569; line-height: 1.5; }
+
+    /* ── Loop annotation ─────────────────────────── */
+    .loop-note {
+      width: 100%;
+      background: #0a1628;
+      border-left: 3px solid #1d4ed8;
+      border-radius: 0 8px 8px 0;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>nanobot 上下文自动压缩流程</h1>
+  <p>每条用户消息处理前触发 · <code>maybe_consolidate_by_tokens()</code> · memory.py</p>
+</div>
+
+<div class="flow">
+
+  <!-- ── Trigger ──────────────────────────────────────── -->
+  <div class="trigger-box">
+    <div class="label">用户发送消息</div>
+    <div class="title">_process_message() → maybe_consolidate_by_tokens(session)</div>
+  </div>
+
+  <div class="conn"><div class="conn-line" style="height:20px"></div><div class="conn-arrow"></div></div>
+
+  <!-- ══ Step 1: Token 估算 ══ -->
+  <div class="card card-detect">
+    <div class="card-header">
+      <span class="step-num">STEP 1</span>
+      <span class="step-title">估算当前 Prompt Token 数</span>
+      <span class="step-fn">estimate_session_prompt_tokens()</span>
+    </div>
+    <div class="card-body">
+
+      <div class="inner">
+        <div class="inner-label">构造探针请求（不实际调用 LLM）</div>
+        <pre><span class="cmt"># 用 "[token-probe]" 作为占位消息，组装完整 prompt 结构</span>
+probe = build_messages(
+    history    = session.get_history(),   <span class="cmt"># messages[last_consolidated:]</span>
+    current    = <span class="str">"[token-probe]"</span>,
+    channel    = channel,
+    chat_id    = chat_id,
+)
+estimated, source = estimate_prompt_tokens_chain(
+    provider, model, probe, tool_definitions
+)</pre>
+      </div>
+
+      <div class="inner">
+        <div class="inner-label">探针计算的组成部分</div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:2px">
+          <div class="gauge-row">
+            <span class="gl">System Prompt</span>
+            <div class="gauge-track"><div class="gauge-fill" style="width:32%;background:#1d4ed8"></div></div>
+            <span class="gv">~6,000</span>
+          </div>
+          <div class="gauge-row">
+            <span class="gl">历史消息</span>
+            <div class="gauge-track"><div class="gauge-fill" style="width:85%;background:#0d9488"></div></div>
+            <span class="gv">~52,000</span>
+          </div>
+          <div class="gauge-row">
+            <span class="gl">当前消息</span>
+            <div class="gauge-track"><div class="gauge-fill" style="width:2%;background:#7c3aed"></div></div>
+            <span class="gv">~500</span>
+          </div>
+          <div class="gauge-row">
+            <span class="gl">Tool 定义</span>
+            <div class="gauge-track"><div class="gauge-fill" style="width:17%;background:#b45309"></div></div>
+            <span class="gv">~3,200</span>
+          </div>
+          <div class="gauge-row">
+            <span class="gl" style="color:#fca5a5;font-weight:700">合计</span>
+            <div class="gauge-track"><div class="gauge-fill" style="width:94%;background:#dc2626"></div></div>
+            <span class="gv" style="color:#fca5a5;font-weight:700">61,700</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="conn"><div class="conn-line" style="height:16px"></div><div class="conn-arrow"></div></div>
+
+  <!-- ══ Step 2: Budget 检查 ══ -->
+  <div class="card card-budget">
+    <div class="card-header">
+      <span class="step-num">STEP 2</span>
+      <span class="step-title">Budget 检查</span>
+      <span class="step-fn">budget = context_window − max_completion − safety_buffer</span>
+    </div>
+    <div class="card-body">
+
+      <pre><span class="kw">budget</span> = <span class="num">65,536</span> − <span class="num">8,192</span> − <span class="num">1,024</span>  <span class="op">=</span> <span class="hi">56,320</span>  <span class="cmt"># 触发阈值</span>
+<span class="kw">target</span> = <span class="num">56,320</span> // <span class="num">2</span>              <span class="op">=</span> <span class="hi">28,160</span>  <span class="cmt"># 压缩后目标水位</span></pre>
+
+      <div class="decision-wrap">
+        <div class="diamond-col">
+          <div class="diamond" style="background:#164e63">
+            <div class="diamond-inner">estimated<br>vs<br>budget</div>
+          </div>
+        </div>
+        <div class="branch-list">
+          <div class="branch">
+            <span class="bl bl-ok">≤ budget</span>
+            <span class="branch-text">Token 充足，记录 debug 日志，<strong>跳过压缩</strong>，直接处理用户消息</span>
+          </div>
+          <div class="branch">
+            <span class="bl bl-over">&gt; budget</span>
+            <span class="branch-text">Token 超限，进入压缩循环（最多 <code>_MAX_CONSOLIDATION_ROUNDS = 5</code> 轮）</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="conn">
+    <div class="conn-line" style="height:12px"></div>
+    <div class="conn-label">estimated &gt; budget，进入压缩循环</div>
+    <div class="conn-line" style="height:12px"></div>
+    <div class="conn-arrow"></div>
+  </div>
+
+  <!-- ══ Step 3: 压缩循环 ══ -->
+  <div class="card card-loop">
+    <div class="card-header">
+      <span class="step-num">STEP 3</span>
+      <span class="step-title">压缩循环 — 找边界，切 chunk</span>
+      <span class="step-fn">pick_consolidation_boundary()</span>
+    </div>
+    <div class="card-body">
+
+      <div class="inner">
+        <div class="inner-label">计算需要移除的 token 量，找切割点</div>
+        <pre><span class="kw">tokens_to_remove</span> = estimated − target
+                   = <span class="num">61,700</span> − <span class="num">28,160</span>  <span class="op">=</span> <span class="hi">33,540</span>
+
+<span class="cmt"># 从 last_consolidated 开始向后扫描</span>
+<span class="cmt"># 找第一个"累计移除量 ≥ tokens_to_remove"的 user-turn 边界</span>
+idx=0   user   800  tokens  → 累计   800   (不够)
+idx=2   user   200  tokens  → 累计  2,000  (不够)
+...
+idx=36  user   ...  tokens  → 累计 34,100  ✓ ≥ 33,540
+
+<span class="kw">boundary</span> = (<span class="num">36</span>, <span class="num">34,100</span>)
+<span class="kw">chunk</span>    = session.messages[last_consolidated : <span class="num">36</span>]   <span class="cmt"># 36 条消息</span></pre>
+      </div>
+
+      <div class="decision-wrap">
+        <div class="diamond-col">
+          <div class="diamond" style="background:#065f46">
+            <div class="diamond-inner">boundary<br>found?</div>
+          </div>
+        </div>
+        <div class="branch-list">
+          <div class="branch">
+            <span class="bl bl-none">None</span>
+            <span class="branch-text">消息太少、无法找到合法边界 → 退出循环，保持原样</span>
+          </div>
+          <div class="branch">
+            <span class="bl bl-ok">Found</span>
+            <span class="branch-text">取出 chunk，调用 LLM 进行记忆压缩（Step 4）</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="conn">
+    <div class="conn-line" style="height:12px"></div>
+    <div class="conn-label">chunk 已就绪，调用 MemoryStore.consolidate()</div>
+    <div class="conn-line" style="height:12px"></div>
+    <div class="conn-arrow"></div>
+  </div>
+
+  <!-- ══ Step 4: LLM 压缩 ══ -->
+  <div class="card card-llm">
+    <div class="card-header">
+      <span class="step-num">STEP 4</span>
+      <span class="step-title">LLM 记忆压缩</span>
+      <span class="step-fn">MemoryStore.consolidate()</span>
+    </div>
+    <div class="card-body">
+
+      <div class="two-col">
+        <div class="inner">
+          <div class="inner-label">System Prompt</div>
+          <div class="inner-body">
+            You are a <strong>memory consolidation agent</strong>.<br>
+            Call the <code>save_memory</code> tool with your consolidation of the conversation.
+          </div>
+        </div>
+        <div class="inner">
+          <div class="inner-label">User Message</div>
+          <pre style="font-size:11px"><span class="cmt">## Current Long-term Memory</span>
+<span class="str">(当前 MEMORY.md 内容 / empty)</span>
+
+<span class="cmt">## Conversation to Process</span>
+<span class="str">[timestamp] USER: ...</span>
+<span class="str">[timestamp] ASSISTANT [tools: ...]: ...</span>
+<span class="str">... (chunk 中的 36 条消息)</span></pre>
+        </div>
+      </div>
+
+      <div class="inner">
+        <div class="inner-label">唯一工具 — save_memory（forced tool_choice）</div>
+        <pre><span class="cmt">// tool_choice 强制调用；若 provider 不支持，自动降级为 auto</span>
+{
+  <span class="kw">"history_entry"</span>: <span class="str">"[2026-04-10 09:15] 用户请求编写 Python 爬虫，..."</span>,
+  <span class="kw">"memory_update"</span>: <span class="str">"## 项目\n- workspace/scraper.py\n- 已完成：代理、重试...\n\n## 用户偏好\n..."</span>
+}</pre>
+      </div>
+
+      <div class="decision-wrap">
+        <div class="diamond-col">
+          <div class="diamond" style="background:#4c1d95">
+            <div class="diamond-inner">tool<br>called?</div>
+          </div>
+        </div>
+        <div class="branch-list">
+          <div class="branch">
+            <span class="bl bl-ok">成功</span>
+            <span class="branch-text">获得 <code>history_entry</code> + <code>memory_update</code>，持久化到磁盘（Step 5）</span>
+          </div>
+          <div class="branch">
+            <span class="bl bl-fail">失败 &lt; 3 次</span>
+            <span class="branch-text">返回 <code>false</code>，退出本轮压缩循环，消息暂不压缩</span>
+          </div>
+          <div class="branch">
+            <span class="bl bl-fail">失败 ≥ 3 次</span>
+            <span class="branch-text">触发降级：raw-archive，直接将原始消息文本写入 HISTORY.md</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Degraded path -->
+      <div class="degrade">
+        <div class="degrade-title">⚠ 降级路径 — Raw Archive</div>
+        <div class="degrade-body">
+          <code>_consecutive_failures ≥ _MAX_FAILURES_BEFORE_RAW_ARCHIVE (3)</code><br>
+          直接将 chunk 原始文本追加到 HISTORY.md，格式：<br><br>
+          <code>[2026-04-10 11:00] [RAW] 36 messages<br>
+          [timestamp] USER: 帮我写一个 Python 爬虫<br>
+          ...</code><br><br>
+          对话照常继续，<strong>不会因记忆压缩失败而卡死</strong>。
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="conn">
+    <div class="conn-line" style="height:12px"></div>
+    <div class="conn-label">save_memory 调用成功</div>
+    <div class="conn-line" style="height:12px"></div>
+    <div class="conn-arrow"></div>
+  </div>
+
+  <!-- ══ Step 5: 持久化 ══ -->
+  <div class="card card-persist">
+    <div class="card-header">
+      <span class="step-num">STEP 5</span>
+      <span class="step-title">持久化到磁盘</span>
+      <span class="step-fn">append_history() + write_long_term()</span>
+    </div>
+    <div class="card-body">
+
+      <div class="file-row">
+        <div class="file-tag">
+          <div class="file-icon">📜</div>
+          <div class="file-info">
+            <span class="file-name">memory/HISTORY.md</span>
+            <span class="file-desc">追加写（append） — 事件摘要日志，可 grep 检索</span>
+          </div>
+        </div>
+        <div class="file-tag">
+          <div class="file-icon">🧠</div>
+          <div class="file-info">
+            <span class="file-name">memory/MEMORY.md</span>
+            <span class="file-desc">覆盖写（overwrite） — 最新长期事实，注入 system prompt</span>
+          </div>
+        </div>
+      </div>
+
+      <pre><span class="cmt"># HISTORY.md 追加（每次压缩一条记录）</span>
+[<span class="num">2026-04-10 09:15</span>] 用户请求编写 Python 爬虫，逐步添加代理支持...
+
+<span class="cmt"># MEMORY.md 覆盖（内容变化时才写）</span>
+<span class="str">## 项目</span>
+- 用户正在开发 Python 爬虫，文件位于 workspace/scraper.py
+- 已完成：代理、重试、日志、单元测试
+
+<span class="str">## 用户偏好</span>
+- 喜欢完整错误处理；倾向 pytest</pre>
+
+    </div>
+  </div>
+
+  <div class="conn"><div class="conn-line" style="height:16px"></div><div class="conn-arrow"></div></div>
+
+  <!-- ══ Step 6: 游标更新 + 重估 ══ -->
+  <div class="card card-cursor">
+    <div class="card-header">
+      <span class="step-num">STEP 6</span>
+      <span class="step-title">更新游标，重估 Token</span>
+      <span class="step-fn">session.last_consolidated = end_idx · sessions.save()</span>
+    </div>
+    <div class="card-body">
+
+      <pre><span class="kw">session.last_consolidated</span> = <span class="num">36</span>   <span class="cmt"># 游标前移，原始消息永不删除</span>
+sessions.save(session)            <span class="cmt"># 持久化 session 到磁盘</span>
+
+<span class="cmt"># 重新估算（get_history() 现在返回 messages[36:]）</span>
+estimated = <span class="hi">28,050</span> tokens</pre>
+
+      <div class="decision-wrap">
+        <div class="diamond-col">
+          <div class="diamond" style="background:#065f46">
+            <div class="diamond-inner">estimated<br>≤ target?</div>
+          </div>
+        </div>
+        <div class="branch-list">
+          <div class="branch">
+            <span class="bl bl-ok">≤ target (28,160)</span>
+            <span class="branch-text"><strong>压缩完成</strong>，退出循环 → Step 7</span>
+          </div>
+          <div class="branch">
+            <span class="bl bl-over">&gt; target</span>
+            <span class="branch-text">仍超出目标 → <strong>继续下一轮</strong>（回到 Step 3，最多 5 轮）</span>
+          </div>
+          <div class="branch">
+            <span class="bl bl-none">第 5 轮仍超出</span>
+            <span class="branch-text">达到最大轮次 <code>_MAX_CONSOLIDATION_ROUNDS</code>，强制退出，继续处理消息</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="loop-note">
+        ↩ <strong>循环注意</strong>：每轮压缩后 <code>last_consolidated</code> 前移，<code>get_history()</code> 返回的消息越来越少。
+        原始 <code>session.messages</code> 数组<strong>永不删除</strong>，游标仅影响 LLM 可见范围。
+      </div>
+
+    </div>
+  </div>
+
+  <div class="conn">
+    <div class="conn-line" style="height:12px"></div>
+    <div class="conn-label">压缩完成，estimated ≤ target</div>
+    <div class="conn-line" style="height:12px"></div>
+    <div class="conn-arrow"></div>
+  </div>
+
+  <!-- ══ Step 7: 正常处理 ══ -->
+  <div class="card card-resume">
+    <div class="card-header">
+      <span class="step-num">STEP 7</span>
+      <span class="step-title">正常处理用户消息（用户无感知）</span>
+    </div>
+    <div class="card-body">
+
+      <div class="inner">
+        <div class="inner-label">压缩后的 Prompt 组成</div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:2px">
+          <div class="gauge-row">
+            <span class="gl">System Prompt</span>
+            <div class="gauge-track"><div class="gauge-fill" style="width:23%;background:#1d4ed8"></div></div>
+            <span class="gv">~6,500</span>
+          </div>
+          <div class="gauge-row">
+            <span class="gl" style="color:#10b981">MEMORY.md</span>
+            <div class="gauge-track"><div class="gauge-fill" style="width:2%;background:#10b981"></div></div>
+            <span class="gv" style="color:#10b981">~500 ↑</span>
+          </div>
+          <div class="gauge-row">
+            <span class="gl">历史 [36..59]</span>
+            <div class="gauge-track"><div class="gauge-fill" style="width:63%;background:#0d9488"></div></div>
+            <span class="gv">~18,000</span>
+          </div>
+          <div class="gauge-row">
+            <span class="gl">当前消息</span>
+            <div class="gauge-track"><div class="gauge-fill" style="width:2%;background:#7c3aed"></div></div>
+            <span class="gv">~500</span>
+          </div>
+          <div class="gauge-row">
+            <span class="gl">Tool 定义</span>
+            <div class="gauge-track"><div class="gauge-fill" style="width:11%;background:#b45309"></div></div>
+            <span class="gv">~3,200</span>
+          </div>
+          <div class="gauge-row">
+            <span class="gl" style="color:#86efac;font-weight:700">合计</span>
+            <div class="gauge-track"><div class="gauge-fill" style="width:43%;background:#166534"></div></div>
+            <span class="gv" style="color:#86efac;font-weight:700">~28,200 ✓</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="conn"><div class="conn-line" style="height:20px"></div><div class="conn-arrow"></div></div>
+
+  <!-- Outcomes -->
+  <div class="outcome-grid">
+    <div class="outcome out-ok">
+      <div class="outcome-icon">✅</div>
+      <div class="outcome-title">压缩前后状态对比</div>
+      <div class="outcome-desc">
+        <strong>压缩前：</strong> messages[0..59]，last_consolidated=0，estimated=61,700<br>
+        <strong>压缩后：</strong> messages[0..59]（不变），last_consolidated=36，estimated=28,050<br>
+        MEMORY.md 注入长期事实，HISTORY.md 追加摘要
+      </div>
+    </div>
+    <div class="outcome out-loop">
+      <div class="outcome-icon">🔑</div>
+      <div class="outcome-title">关键设计原则</div>
+      <div class="outcome-desc">
+        原始消息<strong>永不删除</strong>，游标控制 LLM 可见范围<br>
+        Session 加锁防止并发压缩<br>
+        LLM 连续失败 ≥ 3 次自动降级 raw-archive<br>
+        最多 5 轮循环，避免无限压缩卡死
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

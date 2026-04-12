@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <title>Heartbeat 三阶段工作流</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      padding: 40px 20px;
+      min-height: 100vh;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 22px;
+      font-weight: 600;
+      color: #f8fafc;
+      margin-bottom: 8px;
+      letter-spacing: 0.02em;
+    }
+
+    .subtitle {
+      text-align: center;
+      font-size: 13px;
+      color: #64748b;
+      margin-bottom: 48px;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────── */
+    .flow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      max-width: 780px;
+      margin: 0 auto;
+    }
+
+    /* ── Trigger block ───────────────────────────────────────── */
+    .trigger {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 16px 32px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #94a3b8;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    /* ── Arrow ───────────────────────────────────────────────── */
+    .arrow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      margin: 4px 0;
+    }
+
+    .arrow-line {
+      width: 2px;
+      height: 28px;
+      background: #334155;
+    }
+
+    .arrow-label {
+      font-size: 11px;
+      color: #475569;
+      margin: 2px 0;
+    }
+
+    .arrow-head {
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid #334155;
+    }
+
+    /* ── Phase card ──────────────────────────────────────────── */
+    .phase {
+      width: 100%;
+      border-radius: 16px;
+      border: 1px solid;
+      overflow: hidden;
+    }
+
+    .phase-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+    }
+
+    .phase-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 20px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .phase-title {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .phase-subtitle {
+      margin-left: auto;
+      font-size: 11px;
+      opacity: 0.6;
+      white-space: nowrap;
+    }
+
+    .phase-body {
+      padding: 16px 20px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    /* ── Phase 1 colors ── */
+    .phase-1 { border-color: #1d4ed8; background: #0f172a; }
+    .phase-1 .phase-header { background: #1e3a8a22; }
+    .phase-1 .phase-badge { background: #1d4ed8; color: #fff; }
+    .phase-1 .phase-title { color: #93c5fd; }
+
+    /* ── Phase 2 colors ── */
+    .phase-2 { border-color: #0d9488; background: #0f172a; }
+    .phase-2 .phase-header { background: #0d948822; }
+    .phase-2 .phase-badge { background: #0d9488; color: #fff; }
+    .phase-2 .phase-title { color: #5eead4; }
+
+    /* ── Phase 3 colors ── */
+    .phase-3 { border-color: #7c3aed; background: #0f172a; }
+    .phase-3 .phase-header { background: #7c3aed22; }
+    .phase-3 .phase-badge { background: #7c3aed; color: #fff; }
+    .phase-3 .phase-title { color: #c4b5fd; }
+
+    /* ── Section within phase ────────────────────────────────── */
+    .section {
+      background: #1e293b;
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    .section-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748b;
+      margin-bottom: 8px;
+    }
+
+    .section-content {
+      font-size: 13px;
+      line-height: 1.6;
+      color: #cbd5e1;
+    }
+
+    /* ── Two-column layout ───────────────────────────────────── */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    /* ── Code block ──────────────────────────────────────────── */
+    pre {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 12px;
+      font-family: "JetBrains Mono", "Fira Code", "SF Mono", monospace;
+      color: #94a3b8;
+      white-space: pre-wrap;
+      line-height: 1.5;
+      margin-top: 6px;
+    }
+
+    pre .kw  { color: #7dd3fc; }
+    pre .str { color: #86efac; }
+    pre .val { color: #fca5a5; }
+    pre .cmt { color: #475569; font-style: italic; }
+
+    /* ── Tool pill ───────────────────────────────────────────── */
+    .tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .tool-pill {
+      font-size: 12px;
+      font-family: "JetBrains Mono", "SF Mono", monospace;
+      padding: 3px 10px;
+      border-radius: 6px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #94a3b8;
+    }
+
+    .tool-pill.highlight {
+      border-color: #0d9488;
+      color: #5eead4;
+    }
+
+    /* ── Decision diamond ────────────────────────────────────── */
+    .decision-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      margin-top: 4px;
+    }
+
+    .diamond-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex-shrink: 0;
+      padding-top: 4px;
+    }
+
+    .diamond {
+      width: 52px;
+      height: 52px;
+      transform: rotate(45deg);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .diamond-inner {
+      transform: rotate(-45deg);
+      font-size: 18px;
+    }
+
+    .branches {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex: 1;
+    }
+
+    .branch {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #0f172a;
+      border-radius: 8px;
+      padding: 8px 12px;
+      border: 1px solid #1e293b;
+    }
+
+    .branch-label {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+
+    .branch-label.yes { background: #14532d; color: #86efac; }
+    .branch-label.no  { background: #450a0a; color: #fca5a5; }
+    .branch-label.fallback { background: #1c1917; color: #d6d3d1; }
+
+    .branch-text {
+      font-size: 13px;
+      color: #94a3b8;
+    }
+
+    /* ── Info tag ────────────────────────────────────────────── */
+    .info-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      padding: 3px 9px;
+      border-radius: 5px;
+      background: #1e293b;
+      color: #64748b;
+      border: 1px solid #334155;
+      margin-top: 4px;
+    }
+
+    /* ── Final outcome ───────────────────────────────────────── */
+    .outcome-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      width: 100%;
+    }
+
+    .outcome {
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .outcome-notify {
+      background: #052e16;
+      border: 1px solid #166534;
+    }
+
+    .outcome-silent {
+      background: #1c1917;
+      border: 1px solid #44403c;
+    }
+
+    .outcome-icon { font-size: 24px; }
+
+    .outcome-title {
+      font-size: 13px;
+      font-weight: 600;
+      margin-top: 4px;
+    }
+
+    .outcome-notify .outcome-title { color: #86efac; }
+    .outcome-silent .outcome-title { color: #a8a29e; }
+
+    .outcome-desc {
+      font-size: 12px;
+      color: #64748b;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Heartbeat 三阶段工作流</h1>
+<p class="subtitle">每 interval_s 秒触发一次，三次独立 LLM 调用，逐层过滤</p>
+
+<div class="flow">
+
+  <!-- Trigger -->
+  <div class="trigger">⏱ Timer — 每 interval_s 秒</div>
+
+  <div class="arrow">
+    <div class="arrow-line"></div>
+    <div class="arrow-label">读取 HEARTBEAT.md</div>
+    <div class="arrow-line" style="height:12px"></div>
+    <div class="arrow-head"></div>
+  </div>
+
+  <!-- ══════════════ PHASE 1 ══════════════ -->
+  <div class="phase phase-1">
+    <div class="phase-header">
+      <div class="phase-badge">Phase 1</div>
+      <div class="phase-title">决策 — 要不要执行？</div>
+      <div class="phase-subtitle">轻量 LLM 调用</div>
+    </div>
+    <div class="phase-body">
+
+      <div class="two-col">
+        <div class="section">
+          <div class="section-label">System Prompt</div>
+          <div class="section-content">
+            You are a heartbeat agent.<br>
+            Call the <code>heartbeat</code> tool to report your decision.
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-label">User Message</div>
+          <div class="section-content">
+            Current Time: <em>&lt;时间 + 时区&gt;</em><br><br>
+            Review the following HEARTBEAT.md and decide whether there are active tasks.<br><br>
+            <em>&lt;HEARTBEAT.md 全文&gt;</em>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">唯一工具 — heartbeat</div>
+        <pre><span class="cmt">// LLM 必须调用此工具，否则默认 skip</span>
+{
+  <span class="kw">"action"</span>: <span class="str">"skip"</span> | <span class="str">"run"</span>,           <span class="cmt">// skip = 本轮跳过</span>
+  <span class="kw">"tasks"</span>:  <span class="str">"需要执行的任务描述"</span>   <span class="cmt">// run 时必填，传入 Phase 2</span>
+}</pre>
+      </div>
+
+      <div class="decision-row">
+        <div class="diamond-wrap">
+          <div class="diamond" style="background:#1e3a8a">
+            <div class="diamond-inner">?</div>
+          </div>
+        </div>
+        <div class="branches">
+          <div class="branch">
+            <span class="branch-label no">skip</span>
+            <span class="branch-text">无任务 / 文件为空 → 结束本轮，等待下次触发</span>
+          </div>
+          <div class="branch">
+            <span class="branch-label yes">run</span>
+            <span class="branch-text">有任务 → 携带 tasks 描述进入 Phase 2</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="arrow">
+    <div class="arrow-line"></div>
+    <div class="arrow-label">action = "run"，传递 tasks 描述</div>
+    <div class="arrow-line" style="height:12px"></div>
+    <div class="arrow-head"></div>
+  </div>
+
+  <!-- ══════════════ PHASE 2 ══════════════ -->
+  <div class="phase phase-2">
+    <div class="phase-header">
+      <div class="phase-badge">Phase 2</div>
+      <div class="phase-title">执行 — 完整 Agent Loop</div>
+      <div class="phase-subtitle">process_direct(tasks, session_key="heartbeat")</div>
+    </div>
+    <div class="phase-body">
+
+      <div class="section">
+        <div class="section-label">System Prompt — 与普通对话完全相同</div>
+        <div class="section-content" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
+          <span class="tool-pill">workspace 路径 &amp; 运行时</span>
+          <span class="tool-pill">AGENTS.md</span>
+          <span class="tool-pill">SOUL.md</span>
+          <span class="tool-pill">USER.md</span>
+          <span class="tool-pill">TOOLS.md</span>
+          <span class="tool-pill">memory/MEMORY.md</span>
+          <span class="tool-pill">always:true skills</span>
+          <span class="tool-pill">Runtime Context（时间 + channel + chat_id）</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">可用工具（全量）</div>
+        <div class="tools">
+          <span class="tool-pill">read_file</span>
+          <span class="tool-pill">write_file</span>
+          <span class="tool-pill">edit_file</span>
+          <span class="tool-pill">list_dir</span>
+          <span class="tool-pill">exec</span>
+          <span class="tool-pill">web_search</span>
+          <span class="tool-pill">web_fetch</span>
+          <span class="tool-pill highlight">message</span>
+          <span class="tool-pill highlight">cron</span>
+          <span class="tool-pill">spawn</span>
+          <span class="tool-pill">MCP tools</span>
+        </div>
+        <div class="info-tag" style="margin-top:10px">
+          🔒 session_key = "heartbeat"，独立于用户对话 session，保留最近 keep_recent_messages 条上下文
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="arrow">
+    <div class="arrow-line"></div>
+    <div class="arrow-label">返回执行结果 response</div>
+    <div class="arrow-line" style="height:12px"></div>
+    <div class="arrow-head"></div>
+  </div>
+
+  <!-- ══════════════ PHASE 3 ══════════════ -->
+  <div class="phase phase-3">
+    <div class="phase-header">
+      <div class="phase-badge">Phase 3</div>
+      <div class="phase-title">通知评估 — 要不要推送？</div>
+      <div class="phase-subtitle">轻量 LLM 调用 · evaluator.py</div>
+    </div>
+    <div class="phase-body">
+
+      <div class="two-col">
+        <div class="section">
+          <div class="section-label">System Prompt</div>
+          <div class="section-content" style="font-size:12px;line-height:1.6">
+            You are a <strong>notification gate</strong> for a background agent.<br><br>
+            <strong>Notify</strong> when: actionable info, errors, completed deliverables, explicit reminders.<br><br>
+            <strong>Suppress</strong> when: routine status with nothing new, "everything is normal", essentially empty.
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-label">User Message</div>
+          <pre style="font-size:11px"><span class="kw">## Original task</span>
+<span class="cmt">&lt;Phase 1 的 tasks 描述&gt;</span>
+
+<span class="kw">## Agent response</span>
+<span class="cmt">&lt;Phase 2 的执行结果&gt;</span></pre>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">唯一工具 — evaluate_notification</div>
+        <pre><span class="cmt">// max_tokens=256, temperature=0.0</span>
+{
+  <span class="kw">"should_notify"</span>: <span class="val">true</span> | <span class="val">false</span>,   <span class="cmt">// 是否推送给用户</span>
+  <span class="kw">"reason"</span>:        <span class="str">"一句话说明原因"</span>   <span class="cmt">// 可选</span>
+}</pre>
+      </div>
+
+      <div class="decision-row">
+        <div class="diamond-wrap">
+          <div class="diamond" style="background:#4c1d95">
+            <div class="diamond-inner">?</div>
+          </div>
+        </div>
+        <div class="branches">
+          <div class="branch">
+            <span class="branch-label yes">true</span>
+            <span class="branch-text">推送结果到用户渠道（on_notify → OutboundMessage → Channel）</span>
+          </div>
+          <div class="branch">
+            <span class="branch-label no">false</span>
+            <span class="branch-text">静默丢弃，用户不感知</span>
+          </div>
+          <div class="branch">
+            <span class="branch-label fallback">异常 / 未调用工具</span>
+            <span class="branch-text">兜底 should_notify = true，避免重要消息丢失</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="arrow">
+    <div class="arrow-line" style="height:20px"></div>
+    <div class="arrow-head"></div>
+  </div>
+
+  <!-- Outcomes -->
+  <div class="outcome-row">
+    <div class="outcome outcome-notify">
+      <div class="outcome-icon">📬</div>
+      <div class="outcome-title">推送给用户</div>
+      <div class="outcome-desc">结果通过 Channel（Feishu / Telegram / Slack…）发送给最近活跃的会话</div>
+    </div>
+    <div class="outcome outcome-silent">
+      <div class="outcome-icon">🔇</div>
+      <div class="outcome-title">静默结束</div>
+      <div class="outcome-desc">本轮执行结果丢弃，等待下一个 interval_s 周期重新触发</div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
