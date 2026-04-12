@@ -140,6 +140,123 @@ async def cmd_context(ctx: CommandContext) -> OutboundMessage:
     )
 
 
+async def cmd_skills(ctx: CommandContext) -> OutboundMessage:
+    """List all available skills (workspace + built-in)."""
+    from nanobot.agent.skills import SkillsLoader
+
+    loop = ctx.loop
+    loader = SkillsLoader(loop.workspace)
+    all_skills = loader.list_skills(filter_unavailable=False)
+
+    if not all_skills:
+        content = "No skills found."
+    else:
+        lines = ["📚 Skills:"]
+        for s in all_skills:
+            meta = loader.get_skill_metadata(s["name"]) or {}
+            desc = meta.get("description", "")
+            available = loader._check_requirements(loader._get_skill_meta(s["name"]))
+            always = meta.get("always", "") in ("true", True)
+            tags = []
+            if not available:
+                missing = loader._get_missing_requirements(loader._get_skill_meta(s["name"]))
+                tags.append(f"unavailable: {missing}")
+            if always:
+                tags.append("always")
+            tag_str = f"  [{', '.join(tags)}]" if tags else ""
+            source_icon = "📁" if s["source"] == "workspace" else "📦"
+            lines.append(f"{source_icon} {s['name']}{tag_str}")
+            if desc:
+                lines.append(f"   {desc}")
+        content = "\n".join(lines)
+
+    return OutboundMessage(
+        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        content=content, metadata={"render_as": "text"},
+    )
+
+
+async def cmd_agents(ctx: CommandContext) -> OutboundMessage:
+    """List all available custom subagents."""
+    from nanobot.agent.agents import AgentLoader
+
+    loop = ctx.loop
+    loader = AgentLoader(loop.workspace)
+    all_agents = loader.list_agents()
+
+    if not all_agents:
+        content = (
+            "No custom agents found.\n"
+            f"Add agents to: {loop.workspace / 'agents'}/<name>.md"
+        )
+    else:
+        lines = ["🤖 Custom Agents:"]
+        for a in all_agents:
+            meta = loader._parse_frontmatter_from_path(a["path"])
+            desc = meta.get("description", "")
+            model = meta.get("model", "")
+            tools = meta.get("tools")
+            source_icon = "📁" if a["source"] == "workspace" else "🌐"
+            lines.append(f"{source_icon} {a['name']}")
+            if desc:
+                lines.append(f"   {desc}")
+            if model:
+                lines.append(f"   model: {model}")
+            if tools:
+                tools_str = ", ".join(tools) if isinstance(tools, list) else tools
+                lines.append(f"   tools: {tools_str}")
+        content = "\n".join(lines)
+
+    return OutboundMessage(
+        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        content=content, metadata={"render_as": "text"},
+    )
+
+
+async def cmd_mcp(ctx: CommandContext) -> OutboundMessage:
+    """List configured MCP servers and their registered tools."""
+    loop = ctx.loop
+    mcp_servers: dict = loop._mcp_servers or {}
+
+    if not mcp_servers:
+        content = "No MCP servers configured."
+    else:
+        # Group registered tools by server name
+        tools_by_server: dict[str, list[str]] = {}
+        for tool_name in loop.tools.tool_names:
+            if tool_name.startswith("mcp_"):
+                # tool name format: mcp_<server>_<tool>
+                rest = tool_name[4:]  # strip "mcp_"
+                for srv in mcp_servers:
+                    prefix = srv + "_"
+                    if rest.startswith(prefix):
+                        original = rest[len(prefix):]
+                        tools_by_server.setdefault(srv, []).append(original)
+                        break
+                else:
+                    # fallback: use first underscore split
+                    parts = rest.split("_", 1)
+                    srv = parts[0]
+                    tools_by_server.setdefault(srv, []).append(parts[1] if len(parts) > 1 else rest)
+
+        connected = set(tools_by_server)
+        lines = ["🔌 MCP Servers:"]
+        for name in mcp_servers:
+            if name in connected:
+                tool_list = tools_by_server[name]
+                lines.append(f"✅ {name}  ({len(tool_list)} tools)")
+                for t in tool_list:
+                    lines.append(f"   • {t}")
+            else:
+                lines.append(f"❌ {name}  (not connected)")
+        content = "\n".join(lines)
+
+    return OutboundMessage(
+        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        content=content, metadata={"render_as": "text"},
+    )
+
+
 async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     """Return available slash commands."""
     lines = [
@@ -149,6 +266,9 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
         "/restart — Restart the bot",
         "/status — Show bot status",
         "/context — Show context window token usage",
+        "/skills — List available skills",
+        "/agents — List custom subagents",
+        "/mcp — List MCP servers and tools",
         "/help — Show available commands",
     ]
     return OutboundMessage(
@@ -167,4 +287,7 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/new", cmd_new)
     router.exact("/status", cmd_status)
     router.exact("/context", cmd_context)
+    router.exact("/skills", cmd_skills)
+    router.exact("/agents", cmd_agents)
+    router.exact("/mcp", cmd_mcp)
     router.exact("/help", cmd_help)
