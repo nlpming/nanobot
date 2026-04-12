@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: 对代码进行安全漏洞、性能问题和最佳实践的专项审查
-model: anthropic/claude-haiku-4-5
+model: MiniMax-M2.5
 tools:
   - read_file
   - list_dir
