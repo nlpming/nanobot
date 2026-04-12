@@ -6,7 +6,7 @@
 
 | | Cron | Heartbeat |
 |---|---|---|
-| **任务来源** | agent/用户通过对话创建，存于 `jobs.json` | 用户手动编辑 `HEARTBEAT.md` |
+| **任务来源** | agent/用户通过对话创建，存于 `jobs.json` | 用户手动编辑 `HEARTBEAT.md` 或者通过对话创建 |
 | **调度精度** | 精确：一次性时间戳、固定间隔、cron 表达式 | 固定轮询间隔（默认 30 分钟） |
 | **"要不要执行"** | 时间到了就执行，无条件 | LLM 读取 HEARTBEAT.md 后自主判断 |
 | **结果推送** | 可选 `deliver=true` 推送到指定 channel | 执行后再经 LLM 评估，值得通知才推送 |
@@ -89,6 +89,46 @@
 }
 ```
 
+3分钟后提醒我睡觉，更新后的jobs.json
+
+```json
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "6347cfbb",
+      "name": "3分钟到啦！该睡觉了～ 早点休息，晚安！🌙",
+      "enabled": true,
+      "schedule": {
+        "kind": "at",
+        "atMs": 1776004200000,
+        "everyMs": null,
+        "expr": null,
+        "tz": null
+      },
+      "payload": {
+        "kind": "agent_turn",
+        "message": "3分钟到啦！该睡觉了～ 早点休息，晚安！🌙",
+        "deliver": true,
+        "channel": "feishu",
+        "to": "ou_32921a3ccfafac6cb1fa899c6598a3e0"
+      },
+      "state": {
+        "nextRunAtMs": 1776004200000,
+        "lastRunAtMs": null,
+        "lastStatus": null,
+        "lastError": null,
+        "runHistory": []
+      },
+      "createdAtMs": 1776004072491,
+      "updatedAtMs": 1776004072491,
+      "deleteAfterRun": true
+    }
+  ]
+}
+```
+
+
 **关键字段说明：**
 
 | 字段 | 说明 |
@@ -103,6 +143,23 @@
 | `payload.channel` | 推送目标渠道，如 `"telegram"` |
 | `payload.to` | 推送目标 ID（chat_id / 手机号等） |
 | `deleteAfterRun` | `true` 时执行一次后自动删除（`at` 模式默认开启） |
+
+### jobs.json 持久化与生命周期
+
+**写盘时机**：每次状态变化都会立即写盘，包括：
+- 创建/删除/启用/禁用任务
+- 每次执行后（更新 `last_run_at_ms`、`next_run_at_ms`、`run_history`）
+
+**一次性任务（`at` 模式）的清理行为**：
+
+| `deleteAfterRun` | 执行完后 |
+|---|---|
+| `true`（通过对话创建时默认） | 立即从 jobs.json 中删除 ✅ |
+| `false` | 任务保留，但 `enabled` 置为 `false`，不再触发 |
+
+**启动时不会自动清理**：`CronService` 启动时原样加载所有 jobs，不过滤过期或已禁用的任务。残留任务需手动通过 `cron(action="remove", job_id=...)` 清理。
+
+**热重载**：运行时直接编辑 `jobs.json`，`CronService` 会检测文件 mtime 变化并自动重载，无需重启。
 
 ### 配置项
 
@@ -127,16 +184,137 @@ Cron 无独立配置节，依赖 agent 配置中的模型与 workspace 路径，
   │   └─ 文件为空 → 直接跳过
   │
   ├─ Phase 1 — 决策（轻量 LLM 调用）
-  │   发送 HEARTBEAT.md 内容给 LLM，要求调用 heartbeat 工具
-  │   返回 action = "skip" 或 "run"
+  │   System: "You are a heartbeat agent..."
+  │   发送当前时间 + HEARTBEAT.md 内容，调用虚拟 heartbeat 工具
+  │   返回 action = "skip" 或 "run" + tasks 描述
   │   └─ skip → 结束本轮
   │
-  └─ Phase 2 — 执行（完整 agent loop）
-      将 tasks 描述作为 prompt 发给 agent loop
-      执行完后再经 LLM 评估：结果是否值得通知用户？
-      └─ 值得通知 → 推送到 on_notify 回调（发送到渠道）
-         不值得   → 静默丢弃
+  ├─ Phase 2 — 执行（完整 agent loop）
+  │   System: 标准系统提示（AGENTS.md、memory、skills 全部注入）
+  │   将 tasks 描述作为 prompt 发给 agent loop
+  │   可用所有标准工具：文件、exec、web、cron、message、spawn、MCP
+  │   session_key = "heartbeat"（独立于用户对话）
+  │
+  └─ Phase 3 — 通知评估（轻量 LLM 调用）
+      System: "You are a notification gate..."
+      发送原始 tasks + Phase 2 执行结果
+      调用 evaluate_notification 工具，返回 should_notify
+      ├─ true  → 推送结果到用户渠道（on_notify）
+      └─ false → 静默丢弃（异常时默认 true，不丢消息）
 ```
+
+### Phase 1 决策阶段：System Prompt 与 Tools
+
+Phase 1 是一次极简的 LLM 调用，**不走完整 agent loop**：
+
+**System Prompt（固定）：**
+```
+You are a heartbeat agent. Call the heartbeat tool to report your decision.
+```
+
+**User Message：**
+```
+Current Time: <当前时间含时区>
+
+Review the following HEARTBEAT.md and decide whether there are active tasks.
+
+<HEARTBEAT.md 全文内容>
+```
+
+**唯一可用工具（虚拟 tool call）：**
+
+```json
+{
+  "name": "heartbeat",
+  "parameters": {
+    "action": "skip" | "run",
+    "tasks": "需要执行的任务描述（run 时必填）"
+  }
+}
+```
+
+LLM 必须调用此工具，返回 `skip`（无任务）或 `run`（有任务，附上任务描述）。若未调用工具，默认视为 `skip`。
+
+---
+
+### Phase 2 执行阶段：System Prompt 与 Tools
+
+Phase 2 调用 `agent.process_direct(tasks, session_key="heartbeat")`，走**完整标准 AgentLoop**：
+
+**System Prompt**：与普通对话完全相同，包含：
+- workspace 路径、运行时信息
+- `AGENTS.md`、`SOUL.md` 等 bootstrap 文件
+- `memory/MEMORY.md` 长期记忆
+- 所有 `always: true` 的 skill（如 `memory` skill）
+
+**可用 Tools（与普通对话完全相同）：**
+
+| 工具 | 说明 |
+|------|------|
+| `read_file` / `write_file` / `edit_file` / `list_dir` | 文件读写 |
+| `exec` | Shell 命令（若 config 中 enable） |
+| `web_search` / `web_fetch` | 网络搜索与抓取 |
+| `message` | 主动推送消息到渠道 |
+| `spawn` | 启动子 agent |
+| `cron` | 创建/查询/删除定时任务 |
+| MCP tools | 若配置了 MCP server |
+
+**Session 隔离**：使用独立的 `session_key="heartbeat"`，与用户对话 session 分开。每次执行后仅保留最近 `keep_recent_messages`（默认 8）条消息，避免 context 无限增长。
+
+---
+
+### Phase 3 通知评估阶段：System Prompt 与 Tools
+
+Phase 2 执行完后，结果会经过第三次轻量 LLM 调用，决定是否推送给用户（`nanobot/utils/evaluator.py`）：
+
+**System Prompt（固定）：**
+```
+You are a notification gate for a background agent.
+You will be given the original task and the agent's response.
+Call the evaluate_notification tool to decide whether the user should be notified.
+
+Notify when the response contains actionable information, errors,
+completed deliverables, or anything the user explicitly asked to be reminded about.
+
+Suppress when the response is a routine status check with nothing
+new, a confirmation that everything is normal, or essentially empty.
+```
+
+**User Message：**
+```
+## Original task
+<Phase 1 返回的 tasks 描述>
+
+## Agent response
+<Phase 2 执行结果>
+```
+
+**唯一可用工具：**
+
+```json
+{
+  "name": "evaluate_notification",
+  "parameters": {
+    "should_notify": true | false,
+    "reason": "一句话说明原因"
+  }
+}
+```
+
+**失败兜底**：若 LLM 未调用工具或发生异常，默认 `should_notify=true`，确保重要消息不会被静默丢弃。
+
+---
+
+
+### Heartbeat 能做什么 vs 不能做什么
+
+| 能做 ✅ | 不能做 ❌ |
+|---------|---------|
+| 定时轮询检查（GitHub issue、磁盘空间等） | 监听用户消息事件 |
+| 时间段感知（只在上午 9 点执行） | 精确时间触发（取决于轮询间隔） |
+| 读写文件、执行 shell、调用 web | 在用户发消息时同步响应 |
+| 创建 cron 任务（`cron` 工具可用） | "当用户说 X 时做 Y"（应写在 `AGENTS.md`） |
+| 读取 memory/HISTORY.md 做上下文判断 | 访问用户当前对话 session |
 
 ### 自定义 HEARTBEAT.md
 
