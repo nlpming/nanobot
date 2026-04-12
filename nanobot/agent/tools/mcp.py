@@ -139,10 +139,16 @@ async def connect_mcp_servers(
     mcp_servers: dict, registry: ToolRegistry, stack: AsyncExitStack
 ) -> None:
     """Connect to configured MCP servers and register their tools."""
+    import logging
+    import os
+    logging.getLogger("mcp").setLevel(logging.WARNING)
+
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.sse import sse_client
     from mcp.client.stdio import stdio_client
     from mcp.client.streamable_http import streamable_http_client
+
+    _devnull = open(os.devnull, "w")
 
     for name, cfg in mcp_servers.items():
         try:
@@ -163,7 +169,7 @@ async def connect_mcp_servers(
                 params = StdioServerParameters(
                     command=cfg.command, args=cfg.args, env=cfg.env or None
                 )
-                read, write = await stack.enter_async_context(stdio_client(params))
+                read, write = await stack.enter_async_context(stdio_client(params, errlog=_devnull))
             elif transport_type == "sse":
                 def httpx_client_factory(
                     headers: dict[str, str] | None = None,
