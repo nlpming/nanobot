@@ -8,6 +8,7 @@ from typing import Any
 
 from loguru import logger
 
+from nanobot.agent.agents import AgentLoader
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
@@ -46,12 +47,14 @@ class SubagentManager:
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self.runner = AgentRunner(provider, debug_dir=workspace / "debug")
+        self.agents = AgentLoader(workspace)
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
 
     async def spawn(
         self,
         task: str,
+        agent: str | None = None,
         label: str | None = None,
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
@@ -62,8 +65,14 @@ class SubagentManager:
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
         origin = {"channel": origin_channel, "chat_id": origin_chat_id}
 
+        agent_def = None
+        if agent:
+            agent_def = self.agents.load_agent(agent)
+            if agent_def is None:
+                return f"Error: custom agent '{agent}' not found. Use spawn without 'agent' to use the default subagent."
+
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin)
+            self._run_subagent(task_id, task, display_label, origin, agent_def=agent_def)
         )
         self._running_tasks[task_id] = bg_task
         if session_key:
@@ -78,8 +87,9 @@ class SubagentManager:
 
         bg_task.add_done_callback(_cleanup)
 
-        logger.info("Spawned subagent [{}]: {}", task_id, display_label)
-        return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
+        agent_info = f" (agent: {agent})" if agent else ""
+        logger.info("Spawned subagent [{}]{}: {}", task_id, agent_info, display_label)
+        return f"Subagent [{display_label}] started (id: {task_id}){agent_info}. I'll notify you when it completes."
 
     async def _run_subagent(
         self,
@@ -87,29 +97,46 @@ class SubagentManager:
         task: str,
         label: str,
         origin: dict[str, str],
+        agent_def: dict | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
 
         try:
             # Build subagent tools (no message tool, no spawn tool)
+            # If a custom agent restricts tools, only register the allowed ones.
+            allowed_tool_names: set[str] | None = None
+            if agent_def and agent_def.get("tools"):
+                allowed_tool_names = set(agent_def["tools"])
+
+            def _allow(name: str) -> bool:
+                return allowed_tool_names is None or name in allowed_tool_names
+
             tools = ToolRegistry()
             allowed_dir = self.workspace if self.restrict_to_workspace else None
             extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
-            tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
-            tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
-            tools.register(ExecTool(
-                working_dir=str(self.workspace),
-                timeout=self.exec_config.timeout,
-                restrict_to_workspace=self.restrict_to_workspace,
-                path_append=self.exec_config.path_append,
-            ))
-            tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
-            tools.register(WebFetchTool(proxy=self.web_proxy))
-            
-            system_prompt = self._build_subagent_prompt()
+            if _allow("read_file"):
+                tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
+            if _allow("write_file"):
+                tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
+            if _allow("edit_file"):
+                tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
+            if _allow("list_dir"):
+                tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
+            if _allow("exec"):
+                tools.register(ExecTool(
+                    working_dir=str(self.workspace),
+                    timeout=self.exec_config.timeout,
+                    restrict_to_workspace=self.restrict_to_workspace,
+                    path_append=self.exec_config.path_append,
+                ))
+            if _allow("web_search"):
+                tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
+            if _allow("web_fetch"):
+                tools.register(WebFetchTool(proxy=self.web_proxy))
+
+            model = (agent_def.get("model") if agent_def else None) or self.model
+            system_prompt = self._build_subagent_prompt(agent_def=agent_def)
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task},
@@ -124,7 +151,7 @@ class SubagentManager:
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=messages,
                 tools=tools,
-                model=self.model,
+                model=model,
                 max_iterations=15,
                 hook=_SubagentHook(),
                 max_iterations_message="Task completed but no final response was generated.",
@@ -215,13 +242,25 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
             lines.append(f"- {result.error}")
         return "\n".join(lines) or (result.error or "Error: subagent execution failed.")
     
-    def _build_subagent_prompt(self) -> str:
+    def _build_subagent_prompt(self, agent_def: dict | None = None) -> str:
         """Build a focused system prompt for the subagent."""
         from nanobot.agent.context import ContextBuilder
         from nanobot.agent.skills import SkillsLoader
 
         time_ctx = ContextBuilder._build_runtime_context(None, None)
-        parts = [f"""# Subagent
+
+        if agent_def and agent_def.get("system_prompt"):
+            # Custom agent: use its system prompt with runtime context prepended
+            parts = [f"""# Agent: {agent_def['name']}
+
+{time_ctx}
+
+{agent_def['system_prompt']}
+
+## Workspace
+{self.workspace}"""]
+        else:
+            parts = [f"""# Subagent
 
 {time_ctx}
 

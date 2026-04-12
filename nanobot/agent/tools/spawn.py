@@ -29,13 +29,17 @@ class SpawnTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
+        base = (
             "Spawn a subagent to handle a task in the background. "
             "Use this for complex or time-consuming tasks that can run independently. "
             "The subagent will complete the task and report back when done. "
             "For deliverables or existing projects, inspect the workspace first "
             "and use a dedicated subdirectory when helpful."
         )
+        agents_summary = self._manager.agents.build_agents_summary()
+        if agents_summary:
+            return f"{base}\n\nAvailable custom agents:\n{agents_summary}"
+        return base
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -46,6 +50,13 @@ class SpawnTool(Tool):
                     "type": "string",
                     "description": "The task for the subagent to complete",
                 },
+                "agent": {
+                    "type": "string",
+                    "description": (
+                        "Optional name of a custom agent to use (from the available agents list). "
+                        "If omitted, the default general-purpose subagent is used."
+                    ),
+                },
                 "label": {
                     "type": "string",
                     "description": "Optional short label for the task (for display)",
@@ -54,10 +65,11 @@ class SpawnTool(Tool):
             "required": ["task"],
         }
 
-    async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str:
+    async def execute(self, task: str, agent: str | None = None, label: str | None = None, **kwargs: Any) -> str:
         """Spawn a subagent to execute the given task."""
         return await self._manager.spawn(
             task=task,
+            agent=agent,
             label=label,
             origin_channel=self._origin_channel,
             origin_chat_id=self._origin_chat_id,
