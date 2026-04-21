@@ -39,6 +39,9 @@ class AgentHook:
     async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
         pass
 
+    async def on_thought(self, context: AgentHookContext, thought: str) -> None:
+        pass
+
     async def before_execute_tools(self, context: AgentHookContext) -> None:
         pass
 

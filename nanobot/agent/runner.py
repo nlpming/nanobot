@@ -164,6 +164,7 @@ class AgentRunner:
                 _thought = _extract_thought(response)
                 if _thought:
                     print_thought(_thought)
+                    await hook.on_thought(context, _thought)
                 for tc in response.tool_calls:
                     print_action(tc.name, tc.arguments)
 

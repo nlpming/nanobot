@@ -246,6 +246,10 @@ class AgentLoop:
             def wants_streaming(self) -> bool:
                 return on_stream is not None
 
+            async def on_thought(self, context: AgentHookContext, thought: str) -> None:
+                if on_progress:
+                    await on_progress(f"▸ Thought {thought}")
+
             async def on_stream(self, context: AgentHookContext, delta: str) -> None:
                 from nanobot.utils.helpers import strip_think
 
@@ -264,7 +268,7 @@ class AgentLoop:
             async def before_execute_tools(self, context: AgentHookContext) -> None:
                 if on_progress:
                     tool_hint = loop_self._strip_think(loop_self._tool_hint(context.tool_calls))
-                    await on_progress(tool_hint, tool_hint=True)
+                    await on_progress(tool_hint)
                 for tc in context.tool_calls:
                     args_str = json.dumps(tc.arguments, ensure_ascii=False)
                     logger.info("Tool call: {}({})", tc.name, args_str[:200])
