@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -264,6 +264,7 @@ class _FeishuStreamBuf:
     card_id: str | None = None
     sequence: int = 0
     last_edit: float = 0.0
+    progress_buf: list[tuple[str, str]] = field(default_factory=list)  # (type, content)
 
 
 class FeishuChannel(BaseChannel):
@@ -1047,6 +1048,8 @@ class FeishuChannel(BaseChannel):
         # --- stream end: final update or fallback ---
         if meta.get("_stream_end"):
             buf = self._stream_bufs.pop(chat_id, None)
+            # Flush any buffered progress messages before final content
+            await self.flush_progress_card(rid_type, chat_id, chat_id)
             if not buf or not buf.text:
                 return
             if buf.card_id:
@@ -1099,12 +1102,18 @@ class FeishuChannel(BaseChannel):
 
             # Handle tool hint messages as code blocks in interactive cards.
             # These are progress-only messages and should bypass normal reply routing.
+            # Buffer them and flush later via flush_progress_card().
             if msg.metadata.get("_tool_hint"):
                 if msg.content and msg.content.strip():
-                    await self._send_tool_hint_card(
-                        receive_id_type, msg.chat_id, msg.content.strip()
-                    )
+                    content = msg.content.strip()
+                    # Detect prefix to preserve formatting (▸ Thought / ▸ Obs / ▸ Action)
+                    prefix = content.split(" ")[0] if content.startswith("▸") else "▸ Action"
+                    self._buffer_progress(msg.chat_id, (prefix, content))
                 return
+
+            # Flush buffered progress entries before the final response content
+            if msg.metadata.get("_progress"):
+                await self.flush_progress_card(receive_id_type, msg.chat_id, msg.chat_id)
 
             # Determine whether the first message should quote the user's message.
             # Only the very first send (media or text) in this call uses reply; subsequent
@@ -1374,6 +1383,50 @@ class FeishuChannel(BaseChannel):
             parts.append("".join(buf).strip())
 
         return "\n".join(part for part in parts if part)
+
+    def _buffer_progress(self, chat_id: str, entry: tuple[str, str]) -> None:
+        """Buffer a progress entry (prefix, content) for later flush."""
+        buf = self._stream_bufs.get(chat_id)
+        if buf is None:
+            buf = _FeishuStreamBuf()
+            self._stream_bufs[chat_id] = buf
+        buf.progress_buf.append(entry)
+
+    async def flush_progress_card(self, receive_id_type: str, receive_id: str, chat_id: str) -> None:
+        """Flush buffered progress entries as a single card and clear the buffer."""
+        buf = self._stream_bufs.get(chat_id)
+        if not buf or not buf.progress_buf:
+            return
+
+        loop = asyncio.get_running_loop()
+        lines: list[str] = []
+        for prefix, content in buf.progress_buf:
+            if prefix == "▸ Action":
+                # Format tool calls preserving prefix
+                formatted = self._format_tool_hint_lines(content)
+                lines.append(f"{prefix} {formatted}")
+            else:
+                lines.append(content)
+        buf.progress_buf.clear()
+
+        if not lines:
+            return
+
+        card = {
+            "config": {"wide_screen_mode": True},
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": "\n".join(lines),
+                }
+            ]
+        }
+
+        await loop.run_in_executor(
+            None, self._send_message_sync,
+            receive_id_type, receive_id, "interactive",
+            json.dumps(card, ensure_ascii=False),
+        )
 
     async def _send_tool_hint_card(self, receive_id_type: str, receive_id: str, tool_hint: str) -> None:
         """Send tool hint as an interactive card with formatted code block.
