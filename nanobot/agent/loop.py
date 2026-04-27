@@ -189,10 +189,9 @@ class AgentLoop:
             plugin_modules = self._config.plugins.modules or []
         except AttributeError:
             return
-        if not plugin_modules:
-            return
         plugin_input = PluginInput(workspace=self.workspace, config=self._config)
-        await self.plugin_manager.load(plugin_modules, plugin_input)
+        if plugin_modules:
+            await self.plugin_manager.load(plugin_modules, plugin_input)
         await self.plugin_manager.trigger_config(self._config)
         # Rebuild ContextBuilder with extra skill dirs discovered by plugins
         if self.plugin_manager.extra_skill_dirs:

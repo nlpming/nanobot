@@ -142,10 +142,8 @@ async def cmd_context(ctx: CommandContext) -> OutboundMessage:
 
 async def cmd_skills(ctx: CommandContext) -> OutboundMessage:
     """List all available skills (workspace + built-in)."""
-    from nanobot.agent.skills import SkillsLoader
-
     loop = ctx.loop
-    loader = SkillsLoader(loop.workspace)
+    loader = loop.context.skills
     all_skills = loader.list_skills(filter_unavailable=False)
 
     if not all_skills:

@@ -94,6 +94,47 @@ def _restore_terminal() -> None:
         pass
 
 
+_SLASH_COMMANDS = [
+    ("/new", "Start a new conversation"),
+    ("/stop", "Stop the current task"),
+    ("/restart", "Restart the bot"),
+    ("/status", "Show bot status"),
+    ("/context", "Show context window token usage"),
+    ("/skills", "List available skills"),
+    ("/agents", "List custom subagents"),
+    ("/mcp", "List MCP servers and tools"),
+    ("/help", "Show available commands"),
+    ("/exit", "Exit nanobot"),
+]
+
+_WORD_COMMANDS = [
+    ("exit", "Exit nanobot"),
+    ("quit", "Exit nanobot"),
+]
+
+
+def _make_slash_completer():
+    from prompt_toolkit.completion import Completer, Completion
+
+    all_commands = _SLASH_COMMANDS + _WORD_COMMANDS
+
+    class _SlashCompleter(Completer):
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor
+            if not text:
+                return
+            for cmd, desc in all_commands:
+                if cmd.startswith(text) and cmd != text:
+                    yield Completion(
+                        cmd[len(text):],
+                        start_position=0,
+                        display=cmd,
+                        display_meta=desc,
+                    )
+
+    return _SlashCompleter()
+
+
 def _init_prompt_session() -> None:
     """Create the prompt_toolkit session with persistent file history."""
     global _PROMPT_SESSION, _SAVED_TERM_ATTRS
@@ -112,6 +153,8 @@ def _init_prompt_session() -> None:
 
     _PROMPT_SESSION = PromptSession(
         history=FileHistory(str(history_file)),
+        completer=_make_slash_completer(),
+        complete_while_typing=True,
         enable_open_in_editor=False,
         multiline=False,   # Enter submits (single line mode)
     )

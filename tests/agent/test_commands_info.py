@@ -23,10 +23,13 @@ def _make_ctx(loop, content="/skills"):
 
 def _make_loop(tmp_path: Path):
     """Minimal loop stub with real workspace path."""
+    from nanobot.agent.skills import SkillsLoader
+
     loop = MagicMock()
     loop.workspace = tmp_path
     loop._mcp_servers = {}
     loop.tools.tool_names = []
+    loop.context.skills = SkillsLoader(tmp_path)
     return loop
 
 
