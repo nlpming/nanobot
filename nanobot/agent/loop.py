@@ -72,7 +72,6 @@ class AgentLoop:
         channels_config: ChannelsConfig | None = None,
         timezone: str | None = None,
         config: Any = None,
-        project_dir: Path | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -92,11 +91,9 @@ class AgentLoop:
         self._last_usage: dict[str, int] = {}
 
         self._config = config
-        # Project dir (.nanobot/ in CWD) for project-scoped skills/agents/config
-        self._project_dirs: list[Path] = [project_dir] if project_dir else []
 
         self.plugin_manager = PluginManager()
-        self.context = ContextBuilder(workspace, timezone=timezone, project_dirs=self._project_dirs)
+        self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider, debug_dir=workspace / "debug")
@@ -109,7 +106,6 @@ class AgentLoop:
             web_proxy=web_proxy,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
-            project_dirs=self._project_dirs,
         )
 
         self._running = False
@@ -204,7 +200,6 @@ class AgentLoop:
                 self.workspace,
                 timezone=getattr(self.context, "timezone", None),
                 extra_skill_dirs=self.plugin_manager.extra_skill_dirs,
-                project_dirs=self._project_dirs,
             )
             logger.info(
                 "Plugin extra skill dirs: {}",

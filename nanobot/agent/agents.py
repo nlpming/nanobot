@@ -14,12 +14,10 @@ class AgentLoader:
       - ~/.nanobot/agents/    (global/user-level)
     """
 
-    def __init__(self, workspace: Path, project_dirs: list[Path] | None = None):
+    def __init__(self, workspace: Path):
         self.workspace = workspace
         self.workspace_agents = workspace / "agents"
         self.global_agents = Path("~/.nanobot/agents").expanduser()
-        # Project agent dirs (e.g. .nanobot/agents/) — highest priority
-        self.project_dirs: list[Path] = list(project_dirs) if project_dirs else []
 
     def list_agents(self) -> list[dict]:
         """List all available custom agents (workspace overrides global)."""
@@ -27,8 +25,6 @@ class AgentLoader:
         seen: set[str] = set()
 
         dirs: list[tuple[Path, str]] = [
-            (p / "agents", "project") for p in self.project_dirs
-        ] + [
             (self.workspace_agents, "workspace"),
             (self.global_agents, "global"),
         ]
@@ -106,8 +102,8 @@ class AgentLoader:
     # ------------------------------------------------------------------
 
     def _read_agent_file(self, name: str) -> str | None:
-        """Read agent file content: project first, then workspace, then global."""
-        search_dirs = [p / "agents" for p in self.project_dirs] + [
+        """Read agent file content: workspace first, then global."""
+        search_dirs = [
             self.workspace_agents,
             self.global_agents,
         ]

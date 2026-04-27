@@ -35,7 +35,6 @@ class SubagentManager:
         web_proxy: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
-        project_dirs: list[Path] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -48,7 +47,7 @@ class SubagentManager:
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self.runner = AgentRunner(provider, debug_dir=workspace / "debug")
-        self.agents = AgentLoader(workspace, project_dirs=project_dirs)
+        self.agents = AgentLoader(workspace)
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
 

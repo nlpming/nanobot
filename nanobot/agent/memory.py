@@ -73,7 +73,13 @@ def _is_tool_choice_unsupported(content: str | None) -> bool:
 
 
 class MemoryStore:
-    """Two-layer memory: MEMORY.md (long-term facts) + HISTORY.md (grep-searchable log)."""
+    """Two-layer memory: MEMORY.md (long-term facts) + HISTORY.md (grep-searchable log).
+
+    Supports an optional list of project dirs (e.g. [Path('.nanobot')]).  When
+    present, the first project dir's memory/MEMORY.md is used as project-scoped
+    memory that is injected *before* the global workspace memory.  Writes go to
+    the project memory file when a project dir is active; otherwise to global.
+    """
 
     _MAX_FAILURES_BEFORE_RAW_ARCHIVE = 3
 
@@ -84,11 +90,13 @@ class MemoryStore:
         self._consecutive_failures = 0
 
     def read_long_term(self) -> str:
+        """Read global workspace long-term memory."""
         if self.memory_file.exists():
             return self.memory_file.read_text(encoding="utf-8")
         return ""
 
     def write_long_term(self, content: str) -> None:
+        """Write to global workspace memory."""
         self.memory_file.write_text(content, encoding="utf-8")
 
     def append_history(self, entry: str) -> None:
@@ -96,8 +104,8 @@ class MemoryStore:
             f.write(entry.rstrip() + "\n\n")
 
     def get_memory_context(self) -> str:
-        long_term = self.read_long_term()
-        return f"## Long-term Memory\n{long_term}" if long_term else ""
+        """Return long-term memory content."""
+        return self.read_long_term()
 
     @staticmethod
     def _format_messages(messages: list[dict]) -> str:

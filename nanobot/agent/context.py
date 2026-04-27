@@ -24,13 +24,11 @@ class ContextBuilder:
         workspace: Path,
         timezone: str | None = None,
         extra_skill_dirs: list[Path] | None = None,
-        project_dirs: list[Path] | None = None,
     ):
         self.workspace = workspace
         self.timezone = timezone
-        self.project_dirs: list[Path] = list(project_dirs) if project_dirs else []
         self.memory = MemoryStore(workspace)
-        self.skills = SkillsLoader(workspace, extra_dirs=extra_skill_dirs, project_dirs=self.project_dirs)
+        self.skills = SkillsLoader(workspace, extra_dirs=extra_skill_dirs)
 
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
@@ -95,11 +93,6 @@ Skills with available="false" need dependencies installed first - you can try in
 - Use file tools when they are simpler or more reliable than shell commands.
 """
 
-        project_section = ""
-        if self.project_dirs:
-            project_path = str(self.project_dirs[0].expanduser().resolve())
-            project_section = f"\n## Project\nCurrent project directory: {project_path}\n- Project skills: {project_path}/skills/{{skill-name}}/SKILL.md\n- Project agents: {project_path}/agents/{{agent-name}}.md\n- Project config: {project_path}/config.json"
-
         return f"""# nanobot 🐈
 
 You are nanobot, a helpful AI assistant.
@@ -112,7 +105,6 @@ Your workspace is at: {workspace_path}
 - Long-term memory: {workspace_path}/memory/MEMORY.md (write important facts here)
 - History log: {workspace_path}/memory/HISTORY.md (grep-searchable). Each entry starts with [YYYY-MM-DD HH:MM].
 - Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
-{project_section}
 
 {platform_policy}
 
@@ -139,30 +131,13 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
         return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
 
     def _load_bootstrap_files(self) -> str:
-        """Load bootstrap files from project dirs (highest priority) then workspace."""
+        """Load bootstrap files from workspace."""
         parts = []
-        seen: set[str] = set()
-
-        # Project dirs first (.nanobot/AGENTS.md etc.)
-        for project_dir in self.project_dirs:
-            for filename in self.BOOTSTRAP_FILES:
-                if filename in seen:
-                    continue
-                file_path = project_dir / filename
-                if file_path.exists():
-                    content = file_path.read_text(encoding="utf-8")
-                    parts.append(f"## {filename}\n\n{content}")
-                    seen.add(filename)
-
-        # Global workspace bootstrap files
         for filename in self.BOOTSTRAP_FILES:
-            if filename in seen:
-                continue
             file_path = self.workspace / filename
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")
-
         return "\n\n".join(parts) if parts else ""
 
     def build_messages(
