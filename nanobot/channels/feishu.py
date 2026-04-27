@@ -1101,14 +1101,10 @@ class FeishuChannel(BaseChannel):
             loop = asyncio.get_running_loop()
 
             # Handle tool hint messages as code blocks in interactive cards.
-            # These are progress-only messages and should bypass normal reply routing.
-            # Buffer them and flush later via flush_progress_card().
+            # Send immediately as a standalone card (not buffered).
             if msg.metadata.get("_tool_hint"):
                 if msg.content and msg.content.strip():
-                    content = msg.content.strip()
-                    # Detect prefix to preserve formatting (▸ Thought / ▸ Obs / ▸ Action)
-                    prefix = content.split(" ")[0] if content.startswith("▸") else "▸ Action"
-                    self._buffer_progress(msg.chat_id, (prefix, content))
+                    await self._send_tool_hint_card(receive_id_type, msg.chat_id, msg.content.strip())
                 return
 
             # Flush buffered progress entries before the final response content

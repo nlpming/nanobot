@@ -15,6 +15,11 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.providers.base import LLMProvider, ToolCallRequest
 from nanobot.utils.helpers import build_assistant_message
 
+# Avoid circular import: PluginManager is imported lazily via TYPE_CHECKING
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from nanobot.plugin.manager import PluginManager
+
 def _extract_thought(response) -> str | None:
     """Extract thought/reasoning content from an LLM response for console display."""
     if not response:
@@ -58,6 +63,7 @@ class AgentRunSpec:
     concurrent_tools: bool = False
     fail_on_tool_error: bool = False
     session_id: str | None = None
+    plugin_manager: "PluginManager | None" = None
 
 
 @dataclass(slots=True)
@@ -262,8 +268,18 @@ class AgentRunner:
         spec: AgentRunSpec,
         tool_call: ToolCallRequest,
     ) -> tuple[Any, dict[str, str], BaseException | None]:
+        args = tool_call.arguments
+        session_id = spec.session_id or ""
+        call_id = tool_call.id or ""
+
+        # Plugin: tool.execute.before — may modify args
+        if spec.plugin_manager:
+            args = await spec.plugin_manager.trigger_tool_before(
+                tool_call.name, session_id, call_id, args
+            )
+
         try:
-            result = await spec.tools.execute(tool_call.name, tool_call.arguments)
+            result = await spec.tools.execute(tool_call.name, args)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
@@ -276,14 +292,27 @@ class AgentRunner:
                 return f"Error: {type(exc).__name__}: {exc}", event, exc
             return f"Error: {type(exc).__name__}: {exc}", event, None
 
+        # Plugin: tool.execute.after — may modify result
+        if spec.plugin_manager:
+            result = await spec.plugin_manager.trigger_tool_after(
+                tool_call.name, session_id, call_id, args, result
+            )
+
         detail = "" if result is None else str(result)
         detail = detail.replace("\n", " ").strip()
         if not detail:
             detail = "(empty)"
         elif len(detail) > 120:
             detail = detail[:120] + "..."
-        return result, {
+        status = "error" if isinstance(result, str) and result.startswith("Error") else "ok"
+
+        # Publish to EventBus (fire-and-forget)
+        from nanobot.bus.pubsub import EventBus
+        await EventBus.instance().publish("tool.executed", {
             "name": tool_call.name,
-            "status": "error" if isinstance(result, str) and result.startswith("Error") else "ok",
+            "session_id": session_id,
+            "status": status,
             "detail": detail,
-        }, None
+        })
+
+        return result, {"name": tool_call.name, "status": status, "detail": detail}, None

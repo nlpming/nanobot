@@ -12,6 +12,64 @@ from nanobot.config.schema import Config
 _current_config_path: Path | None = None
 
 
+def find_project_dir(cwd: Path | None = None) -> Path | None:
+    """Return .nanobot/ in the given directory (default: CWD) if it exists."""
+    base = cwd or Path.cwd()
+    candidate = base / ".nanobot"
+    return candidate if candidate.is_dir() else None
+
+
+def apply_project_config(config: Config, project_dir: Path) -> None:
+    """Merge project-level .nanobot/config.json into the global config (in-place).
+
+    Only additive/non-destructive keys are merged:
+    - tools.mcp_servers: project servers are added (project wins on name collision)
+    - plugins.modules: project modules are prepended
+    - plugins.extra_skill_dirs: project dirs are prepended
+    """
+    project_config_path = project_dir / "config.json"
+    if not project_config_path.exists():
+        return
+    try:
+        with open(project_config_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to load project config {}: {}", project_config_path, e)
+        return
+
+    # Merge MCP servers (project overrides global on name collision)
+    from nanobot.config.schema import MCPServerConfig
+    raw_tools = data.get("tools", {})
+    project_mcps = raw_tools.get("mcpServers", raw_tools.get("mcp_servers", {}))
+    for name, srv_data in project_mcps.items():
+        try:
+            config.tools.mcp_servers[name] = MCPServerConfig.model_validate(srv_data)
+        except Exception as e:
+            logger.warning("Skipping invalid project MCP server '{}': {}", name, e)
+
+    # Merge plugin modules (project first)
+    from nanobot.config.schema import PluginsConfig
+    raw_plugins = data.get("plugins", {})
+    project_modules = raw_plugins.get("modules", [])
+    if project_modules:
+        combined = list(project_modules)
+        for m in config.plugins.modules:
+            if m not in combined:
+                combined.append(m)
+        config.plugins.modules = combined
+
+    # Merge extra skill dirs (project first)
+    project_skill_dirs = raw_plugins.get("extraSkillDirs", raw_plugins.get("extra_skill_dirs", []))
+    if project_skill_dirs:
+        combined_dirs = list(project_skill_dirs)
+        for d in config.plugins.extra_skill_dirs:
+            if d not in combined_dirs:
+                combined_dirs.append(d)
+        config.plugins.extra_skill_dirs = combined_dirs
+
+    logger.info("Applied project config from {}", project_config_path)
+
+
 def set_config_path(path: Path) -> None:
     """Set the current config path (used to derive data directory)."""
     global _current_config_path

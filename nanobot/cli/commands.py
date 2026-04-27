@@ -444,7 +444,7 @@ def _make_provider(config: Config):
 
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
     """Load config and optionally override the active workspace."""
-    from nanobot.config.loader import load_config, set_config_path
+    from nanobot.config.loader import apply_project_config, find_project_dir, load_config, set_config_path
 
     config_path = None
     if config:
@@ -459,7 +459,20 @@ def _load_runtime_config(config: str | None = None, workspace: str | None = None
     _warn_deprecated_config_keys(config_path)
     if workspace:
         loaded.agents.defaults.workspace = workspace
+
+    # Apply project config from .nanobot/config.json in CWD (if present)
+    project_dir = find_project_dir()
+    if project_dir:
+        apply_project_config(loaded, project_dir)
+        console.print(f"[dim]Project dir: {project_dir}[/dim]")
+
     return loaded
+
+
+def _get_project_dir() -> Path | None:
+    """Return the project dir (.nanobot/ in CWD) if it exists."""
+    from nanobot.config.loader import find_project_dir
+    return find_project_dir()
 
 
 def _warn_deprecated_config_keys(config_path: Path | None) -> None:
@@ -550,6 +563,8 @@ def gateway(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
+        config=config,
+        project_dir=_get_project_dir(),
     )
 
     # Set cron callback (needs agent)
@@ -755,6 +770,8 @@ def agent(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
+        config=config,
+        project_dir=_get_project_dir(),
     )
 
     # Shared reference for progress callbacks

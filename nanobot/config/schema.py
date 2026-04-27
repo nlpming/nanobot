@@ -150,6 +150,16 @@ class ToolsConfig(Base):
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class PluginsConfig(Base):
+    """Plugin system configuration."""
+
+    modules: list[str] = Field(default_factory=list)
+    """Dotted Python module paths for plugins to load, e.g. ["nanobot.plugins.superpowers"]."""
+
+    extra_skill_dirs: list[str] = Field(default_factory=list)
+    """Additional skill directories to register (absolute paths or ~ paths)."""
+
+
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
@@ -158,6 +168,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    plugins: PluginsConfig = Field(default_factory=PluginsConfig)
 
     @property
     def workspace_path(self) -> Path:

@@ -18,6 +18,8 @@ from nanobot.agent.context import ContextBuilder
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.memory import MemoryConsolidator
 from nanobot.agent.runner import AgentRunSpec, AgentRunner
+from nanobot.plugin.base import PluginInput
+from nanobot.plugin.manager import PluginManager
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
@@ -69,6 +71,8 @@ class AgentLoop:
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
         timezone: str | None = None,
+        config: Any = None,
+        project_dir: Path | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -87,7 +91,12 @@ class AgentLoop:
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
 
-        self.context = ContextBuilder(workspace, timezone=timezone)
+        self._config = config
+        # Project dir (.nanobot/ in CWD) for project-scoped skills/agents/config
+        self._project_dirs: list[Path] = [project_dir] if project_dir else []
+
+        self.plugin_manager = PluginManager()
+        self.context = ContextBuilder(workspace, timezone=timezone, project_dirs=self._project_dirs)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider, debug_dir=workspace / "debug")
@@ -100,6 +109,7 @@ class AgentLoop:
             web_proxy=web_proxy,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            project_dirs=self._project_dirs,
         )
 
         self._running = False
@@ -174,6 +184,33 @@ class AgentLoop:
         finally:
             self._mcp_connecting = False
 
+    async def _load_plugins(self) -> None:
+        """Load plugins from config and apply the config hook (one-time)."""
+        if not self._config:
+            return
+        plugin_modules: list[str] = []
+        try:
+            plugin_modules = self._config.plugins.modules or []
+        except AttributeError:
+            return
+        if not plugin_modules:
+            return
+        plugin_input = PluginInput(workspace=self.workspace, config=self._config)
+        await self.plugin_manager.load(plugin_modules, plugin_input)
+        await self.plugin_manager.trigger_config(self._config)
+        # Rebuild ContextBuilder with extra skill dirs discovered by plugins
+        if self.plugin_manager.extra_skill_dirs:
+            self.context = ContextBuilder(
+                self.workspace,
+                timezone=getattr(self.context, "timezone", None),
+                extra_skill_dirs=self.plugin_manager.extra_skill_dirs,
+                project_dirs=self._project_dirs,
+            )
+            logger.info(
+                "Plugin extra skill dirs: {}",
+                [str(d) for d in self.plugin_manager.extra_skill_dirs],
+            )
+
     def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
         """Update context for all tools that need routing info."""
         for name in ("message", "spawn", "cron"):
@@ -247,8 +284,7 @@ class AgentLoop:
                 return on_stream is not None
 
             async def on_thought(self, context: AgentHookContext, thought: str) -> None:
-                if on_progress:
-                    await on_progress(f"▸ Thought {thought}")
+                pass  # internal reasoning shown in console only, not forwarded to on_progress
 
             async def on_stream(self, context: AgentHookContext, delta: str) -> None:
                 from nanobot.utils.helpers import strip_think
@@ -267,8 +303,13 @@ class AgentLoop:
 
             async def before_execute_tools(self, context: AgentHookContext) -> None:
                 if on_progress:
+                    # In non-streaming mode, show the visible portion of the response content
+                    if on_stream is None and context.response:
+                        visible = loop_self._strip_think(context.response.content)
+                        if visible and visible.strip():
+                            await on_progress(visible.strip(), tool_hint=False)
                     tool_hint = loop_self._strip_think(loop_self._tool_hint(context.tool_calls))
-                    await on_progress(tool_hint)
+                    await on_progress(tool_hint, tool_hint=True)
                 for tc in context.tool_calls:
                     args_str = json.dumps(tc.arguments, ensure_ascii=False)
                     logger.info("Tool call: {}({})", tc.name, args_str[:200])
@@ -287,6 +328,7 @@ class AgentLoop:
             error_message="Sorry, I encountered an error calling the AI model.",
             concurrent_tools=True,
             session_id=f"{channel}:{chat_id}",
+            plugin_manager=self.plugin_manager,
         ))
         self._last_usage = result.usage
         if result.stop_reason == "max_iterations":
@@ -299,6 +341,7 @@ class AgentLoop:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
         self._running = True
         await self._connect_mcp()
+        await self._load_plugins()
         logger.info("Agent loop started")
 
         while self._running:
@@ -469,6 +512,7 @@ class AgentLoop:
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
         )
+        initial_messages = await self.plugin_manager.trigger_messages_transform(initial_messages)
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
             meta = dict(msg.metadata or {})

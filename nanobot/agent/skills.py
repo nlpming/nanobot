@@ -18,10 +18,19 @@ class SkillsLoader:
     specific tools or perform certain tasks.
     """
 
-    def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        builtin_skills_dir: Path | None = None,
+        extra_dirs: list[Path] | None = None,
+        project_dirs: list[Path] | None = None,
+    ):
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
+        self.extra_dirs: list[Path] = list(extra_dirs) if extra_dirs else []
+        # Project skill dirs (e.g. .nanobot/skills/) — highest priority, searched before workspace
+        self.project_dirs: list[Path] = list(project_dirs) if project_dirs else []
 
     def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
         """
@@ -35,12 +44,22 @@ class SkillsLoader:
         """
         skills = []
 
-        # Workspace skills (highest priority)
+        # Project skills (highest priority — from .nanobot/skills/)
+        for project_dir in self.project_dirs:
+            project_skills = project_dir / "skills"
+            if project_skills.exists():
+                for skill_dir in project_skills.iterdir():
+                    if skill_dir.is_dir():
+                        skill_file = skill_dir / "SKILL.md"
+                        if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
+                            skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "project"})
+
+        # Workspace skills (global ~/.nanobot/workspace/skills/)
         if self.workspace_skills.exists():
             for skill_dir in self.workspace_skills.iterdir():
                 if skill_dir.is_dir():
                     skill_file = skill_dir / "SKILL.md"
-                    if skill_file.exists():
+                    if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
                         skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "workspace"})
 
         # Built-in skills
@@ -50,6 +69,15 @@ class SkillsLoader:
                     skill_file = skill_dir / "SKILL.md"
                     if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
                         skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "builtin"})
+
+        # Plugin / extra skill directories
+        for extra_dir in self.extra_dirs:
+            if extra_dir.exists():
+                for skill_dir in extra_dir.iterdir():
+                    if skill_dir.is_dir():
+                        skill_file = skill_dir / "SKILL.md"
+                        if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
+                            skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "plugin"})
 
         # Filter by requirements
         if filter_unavailable:
@@ -66,7 +94,13 @@ class SkillsLoader:
         Returns:
             Skill content or None if not found.
         """
-        # Check workspace first
+        # Check project dirs first (highest priority)
+        for project_dir in self.project_dirs:
+            project_skill = project_dir / "skills" / name / "SKILL.md"
+            if project_skill.exists():
+                return project_skill.read_text(encoding="utf-8")
+
+        # Check workspace
         workspace_skill = self.workspace_skills / name / "SKILL.md"
         if workspace_skill.exists():
             return workspace_skill.read_text(encoding="utf-8")
@@ -76,6 +110,12 @@ class SkillsLoader:
             builtin_skill = self.builtin_skills / name / "SKILL.md"
             if builtin_skill.exists():
                 return builtin_skill.read_text(encoding="utf-8")
+
+        # Check plugin / extra dirs
+        for extra_dir in self.extra_dirs:
+            extra_skill = extra_dir / name / "SKILL.md"
+            if extra_skill.exists():
+                return extra_skill.read_text(encoding="utf-8")
 
         return None
 
