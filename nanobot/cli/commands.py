@@ -104,7 +104,6 @@ _SLASH_COMMANDS = [
     ("/agents", "List custom subagents"),
     ("/mcp", "List MCP servers and tools"),
     ("/help", "Show available commands"),
-    ("/init", "Generate/update AGENTS.md for current project"),
     ("/exit", "Exit nanobot"),
 ]
 
