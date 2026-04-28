@@ -13,15 +13,9 @@ class SpawnTool(Tool):
 
     def __init__(self, manager: "SubagentManager"):
         self._manager = manager
-        self._origin_channel = "cli"
-        self._origin_chat_id = "direct"
-        self._session_key = "cli:direct"
 
     def set_context(self, channel: str, chat_id: str) -> None:
-        """Set the origin context for subagent announcements."""
-        self._origin_channel = channel
-        self._origin_chat_id = chat_id
-        self._session_key = f"{channel}:{chat_id}"
+        pass  # subagents run inline; no bus routing needed
 
     @property
     def name(self) -> str:
@@ -30,9 +24,9 @@ class SpawnTool(Tool):
     @property
     def description(self) -> str:
         base = (
-            "Spawn a subagent to handle a task in the background. "
-            "Use this for complex or time-consuming tasks that can run independently. "
-            "The subagent will complete the task and report back when done. "
+            "Spawn a subagent to complete a task and return its result. "
+            "Multiple spawn calls in the same response run in parallel. "
+            "Use this to delegate independent subtasks concurrently. "
             "For deliverables or existing projects, inspect the workspace first "
             "and use a dedicated subdirectory when helpful."
         )
@@ -66,12 +60,5 @@ class SpawnTool(Tool):
         }
 
     async def execute(self, task: str, agent: str | None = None, label: str | None = None, **kwargs: Any) -> str:
-        """Spawn a subagent to execute the given task."""
-        return await self._manager.spawn(
-            task=task,
-            agent=agent,
-            label=label,
-            origin_channel=self._origin_channel,
-            origin_chat_id=self._origin_chat_id,
-            session_key=self._session_key,
-        )
+        """Spawn a subagent to execute the given task and return its result."""
+        return await self._manager.spawn(task=task, agent=agent, label=label)

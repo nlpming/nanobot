@@ -1,4 +1,4 @@
-"""Subagent manager for background task execution."""
+"""Subagent manager for synchronous subagent execution."""
 
 import asyncio
 import json
@@ -16,20 +16,17 @@ from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTo
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
-from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import ExecToolConfig
 from nanobot.providers.base import LLMProvider
 
 
 class SubagentManager:
-    """Manages background subagent execution."""
+    """Manages synchronous subagent execution (parallel via concurrent tool calls)."""
 
     def __init__(
         self,
         provider: LLMProvider,
         workspace: Path,
-        bus: MessageBus,
         model: str | None = None,
         web_search_config: "WebSearchConfig | None" = None,
         web_proxy: str | None = None,
@@ -40,7 +37,6 @@ class SubagentManager:
 
         self.provider = provider
         self.workspace = workspace
-        self.bus = bus
         self.model = model or provider.get_default_model()
         self.web_search_config = web_search_config or WebSearchConfig()
         self.web_proxy = web_proxy
@@ -48,63 +44,36 @@ class SubagentManager:
         self.restrict_to_workspace = restrict_to_workspace
         self.runner = AgentRunner(provider, debug_dir=workspace / "debug")
         self.agents = AgentLoader(workspace)
-        self._running_tasks: dict[str, asyncio.Task[None]] = {}
-        self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
 
     async def spawn(
         self,
         task: str,
         agent: str | None = None,
         label: str | None = None,
-        origin_channel: str = "cli",
-        origin_chat_id: str = "direct",
-        session_key: str | None = None,
     ) -> str:
-        """Spawn a subagent to execute a task in the background."""
+        """Run a subagent synchronously and return its result."""
         task_id = str(uuid.uuid4())[:8]
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
-        origin = {"channel": origin_channel, "chat_id": origin_chat_id}
 
         agent_def = None
         if agent:
             agent_def = self.agents.load_agent(agent)
             if agent_def is None:
-                return f"Error: custom agent '{agent}' not found. Use spawn without 'agent' to use the default subagent."
-
-        bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin, agent_def=agent_def)
-        )
-        self._running_tasks[task_id] = bg_task
-        if session_key:
-            self._session_tasks.setdefault(session_key, set()).add(task_id)
-
-        def _cleanup(_: asyncio.Task) -> None:
-            self._running_tasks.pop(task_id, None)
-            if session_key and (ids := self._session_tasks.get(session_key)):
-                ids.discard(task_id)
-                if not ids:
-                    del self._session_tasks[session_key]
-
-        bg_task.add_done_callback(_cleanup)
+                return f"Error: custom agent '{agent}' not found."
 
         agent_info = f" (agent: {agent})" if agent else ""
-        logger.info("Spawned subagent [{}]{}: {}", task_id, agent_info, display_label)
-        return f"Subagent [{display_label}] started (id: {task_id}){agent_info}. I'll notify you when it completes."
+        logger.info("Subagent [{}]{} starting: {}", task_id, agent_info, display_label)
+        return await self._run_subagent(task_id, task, display_label, agent_def=agent_def)
 
     async def _run_subagent(
         self,
         task_id: str,
         task: str,
         label: str,
-        origin: dict[str, str],
         agent_def: dict | None = None,
-    ) -> None:
-        """Execute the subagent task and announce the result."""
-        logger.info("Subagent [{}] starting task: {}", task_id, label)
-
+    ) -> str:
+        """Execute the subagent task and return its result string."""
         try:
-            # Build subagent tools (no message tool, no spawn tool)
-            # If a custom agent restricts tools, only register the allowed ones.
             allowed_tool_names: set[str] | None = None
             if agent_def and agent_def.get("tools"):
                 allowed_tool_names = set(agent_def["tools"])
@@ -159,67 +128,24 @@ class SubagentManager:
                 fail_on_tool_error=True,
                 session_id=f"subagent_{task_id}",
             ))
+
             if result.stop_reason == "tool_error":
-                await self._announce_result(
-                    task_id,
-                    label,
-                    task,
-                    self._format_partial_progress(result),
-                    origin,
-                    "error",
-                )
-                return
+                logger.warning("Subagent [{}] failed with tool error", task_id)
+                return f"[Subagent '{label}' failed]\n\n{self._format_partial_progress(result)}"
             if result.stop_reason == "error":
-                await self._announce_result(
-                    task_id,
-                    label,
-                    task,
-                    result.error or "Error: subagent execution failed.",
-                    origin,
-                    "error",
-                )
-                return
+                logger.warning("Subagent [{}] failed: {}", task_id, result.error)
+                return f"[Subagent '{label}' failed]\n\n{result.error or 'Subagent execution failed.'}"
+
             final_result = result.final_content or "Task completed but no final response was generated."
-
             logger.info("Subagent [{}] completed successfully", task_id)
-            await self._announce_result(task_id, label, task, final_result, origin, "ok")
+            return f"[Subagent '{label}' completed]\n\n{final_result}"
 
+        except asyncio.CancelledError:
+            logger.info("Subagent [{}] cancelled", task_id)
+            raise
         except Exception as e:
-            error_msg = f"Error: {str(e)}"
             logger.error("Subagent [{}] failed: {}", task_id, e)
-            await self._announce_result(task_id, label, task, error_msg, origin, "error")
-
-    async def _announce_result(
-        self,
-        task_id: str,
-        label: str,
-        task: str,
-        result: str,
-        origin: dict[str, str],
-        status: str,
-    ) -> None:
-        """Announce the subagent result to the main agent via the message bus."""
-        status_text = "completed successfully" if status == "ok" else "failed"
-
-        announce_content = f"""[Subagent '{label}' {status_text}]
-
-Task: {task}
-
-Result:
-{result}
-
-Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not mention technical details like "subagent" or task IDs."""
-
-        # Inject as system message to trigger main agent
-        msg = InboundMessage(
-            channel="system",
-            sender_id="subagent",
-            chat_id=f"{origin['channel']}:{origin['chat_id']}",
-            content=announce_content,
-        )
-
-        await self.bus.publish_inbound(msg)
-        logger.debug("Subagent [{}] announced result to {}:{}", task_id, origin['channel'], origin['chat_id'])
+            return f"[Subagent '{label}' failed]\n\nError: {e}"
 
     @staticmethod
     def _format_partial_progress(result) -> str:
@@ -241,7 +167,7 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
             lines.append("Failure:")
             lines.append(f"- {result.error}")
         return "\n".join(lines) or (result.error or "Error: subagent execution failed.")
-    
+
     def _build_subagent_prompt(self, agent_def: dict | None = None) -> str:
         """Build a focused system prompt for the subagent."""
         from nanobot.agent.context import ContextBuilder
@@ -250,7 +176,6 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
         time_ctx = ContextBuilder._build_runtime_context(None, None)
 
         if agent_def and agent_def.get("system_prompt"):
-            # Custom agent: use its system prompt with runtime context prepended
             parts = [f"""# Agent: {agent_def['name']}
 
 {time_ctx}
@@ -279,15 +204,8 @@ Tools like 'read_file' and 'web_fetch' can return native image content. Read vis
         return "\n\n".join(parts)
 
     async def cancel_by_session(self, session_key: str) -> int:
-        """Cancel all subagents for the given session. Returns count cancelled."""
-        tasks = [self._running_tasks[tid] for tid in self._session_tasks.get(session_key, [])
-                 if tid in self._running_tasks and not self._running_tasks[tid].done()]
-        for t in tasks:
-            t.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        return len(tasks)
+        """Subagents now run inline; cancellation is handled by parent task cancellation."""
+        return 0
 
     def get_running_count(self) -> int:
-        """Return the number of currently running subagents."""
-        return len(self._running_tasks)
+        return 0

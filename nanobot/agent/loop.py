@@ -100,7 +100,6 @@ class AgentLoop:
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
-            bus=bus,
             model=self.model,
             web_search_config=self.web_search_config,
             web_proxy=web_proxy,

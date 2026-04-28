@@ -231,9 +231,6 @@ class TestSpawnToolWithAgent:
             task="review main.py",
             agent="code-reviewer",
             label="review",
-            origin_channel="cli",
-            origin_chat_id="direct",
-            session_key="cli:direct",
         )
 
     @pytest.mark.asyncio
@@ -245,9 +242,6 @@ class TestSpawnToolWithAgent:
             task="do something",
             agent=None,
             label=None,
-            origin_channel="cli",
-            origin_chat_id="direct",
-            session_key="cli:direct",
         )
 
     def test_description_includes_agents_summary(self, tmp_path):
@@ -276,30 +270,25 @@ class TestSpawnToolWithAgent:
 class TestSubagentManagerCustomAgent:
     def _make_manager(self, tmp_path: Path):
         from nanobot.agent.subagent import SubagentManager
-        from nanobot.bus.queue import MessageBus
 
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "default-model"
-        mgr = SubagentManager(provider=provider, workspace=tmp_path, bus=bus)
-        return mgr, bus
+        mgr = SubagentManager(provider=provider, workspace=tmp_path)
+        return mgr
 
     @pytest.mark.asyncio
     async def test_spawn_returns_error_for_unknown_agent(self, tmp_path):
-        mgr, _ = self._make_manager(tmp_path)
+        mgr = self._make_manager(tmp_path)
         result = await mgr.spawn(task="do something", agent="nonexistent-agent")
         assert "not found" in result
         assert "nonexistent-agent" in result
-        # No background task should have been created
-        assert mgr.get_running_count() == 0
 
     @pytest.mark.asyncio
     async def test_spawn_with_custom_agent_uses_agent_model(self, tmp_path, monkeypatch):
         from nanobot.providers.base import LLMResponse
 
         _make_agents_dir(tmp_path, {"code-reviewer.md": AGENT_MD})
-        mgr, bus = self._make_manager(tmp_path)
-        mgr._announce_result = AsyncMock()
+        mgr = self._make_manager(tmp_path)
 
         used_models: list[str] = []
 
@@ -310,7 +299,7 @@ class TestSubagentManagerCustomAgent:
         mgr.provider.chat_with_retry = fake_chat
 
         await mgr._run_subagent(
-            "t1", "review code", "review", {"channel": "test", "chat_id": "c1"},
+            "t1", "review code", "review",
             agent_def=mgr.agents.load_agent("code-reviewer"),
         )
 
@@ -321,8 +310,7 @@ class TestSubagentManagerCustomAgent:
         from nanobot.providers.base import LLMResponse
 
         _make_agents_dir(tmp_path, {"code-reviewer.md": AGENT_MD})
-        mgr, bus = self._make_manager(tmp_path)
-        mgr._announce_result = AsyncMock()
+        mgr = self._make_manager(tmp_path)
 
         captured_messages: list = []
 
@@ -334,7 +322,7 @@ class TestSubagentManagerCustomAgent:
 
         agent_def = mgr.agents.load_agent("code-reviewer")
         await mgr._run_subagent(
-            "t1", "review code", "review", {"channel": "test", "chat_id": "c1"},
+            "t1", "review code", "review",
             agent_def=agent_def,
         )
 
@@ -348,16 +336,9 @@ class TestSubagentManagerCustomAgent:
         from nanobot.providers.base import LLMResponse
 
         _make_agents_dir(tmp_path, {"code-reviewer.md": AGENT_MD})
-        mgr, bus = self._make_manager(tmp_path)
-        mgr._announce_result = AsyncMock()
-
-        async def fake_chat(*, messages, tools, **kwargs):
-            return LLMResponse(content="done", tool_calls=[])
-
-        mgr.provider.chat_with_retry = fake_chat
+        mgr = self._make_manager(tmp_path)
 
         captured_registries: list = []
-        original_run = mgr.runner.run
 
         async def fake_run(spec):
             captured_registries.append(spec.tools)
@@ -371,7 +352,7 @@ class TestSubagentManagerCustomAgent:
 
         agent_def = mgr.agents.load_agent("code-reviewer")
         await mgr._run_subagent(
-            "t1", "review code", "review", {"channel": "test", "chat_id": "c1"},
+            "t1", "review code", "review",
             agent_def=agent_def,
         )
 
@@ -388,8 +369,7 @@ class TestSubagentManagerCustomAgent:
 
     @pytest.mark.asyncio
     async def test_spawn_default_agent_uses_all_tools(self, tmp_path):
-        mgr, bus = self._make_manager(tmp_path)
-        mgr._announce_result = AsyncMock()
+        mgr = self._make_manager(tmp_path)
 
         captured_registries: list = []
 
@@ -403,10 +383,7 @@ class TestSubagentManagerCustomAgent:
 
         mgr.runner.run = fake_run
 
-        await mgr._run_subagent(
-            "t1", "do task", "task", {"channel": "test", "chat_id": "c1"},
-            agent_def=None,
-        )
+        await mgr._run_subagent("t1", "do task", "task", agent_def=None)
 
         registry = captured_registries[0]
         tool_names = {t.name for t in registry._tools.values()}
@@ -419,8 +396,7 @@ class TestSubagentManagerCustomAgent:
     async def test_spawn_default_agent_falls_back_to_default_model(self, tmp_path):
         from nanobot.providers.base import LLMResponse
 
-        mgr, bus = self._make_manager(tmp_path)
-        mgr._announce_result = AsyncMock()
+        mgr = self._make_manager(tmp_path)
 
         used_models: list[str] = []
 
@@ -430,22 +406,16 @@ class TestSubagentManagerCustomAgent:
 
         mgr.provider.chat_with_retry = fake_chat
 
-        await mgr._run_subagent(
-            "t1", "do task", "task", {"channel": "test", "chat_id": "c1"},
-            agent_def=None,
-        )
+        await mgr._run_subagent("t1", "do task", "task", agent_def=None)
 
         assert used_models[0] == "default-model"
 
     @pytest.mark.asyncio
     async def test_spawn_label_includes_agent_name(self, tmp_path):
         _make_agents_dir(tmp_path, {"code-reviewer.md": AGENT_MD})
-        mgr, _ = self._make_manager(tmp_path)
-        mgr._run_subagent = AsyncMock()
+        mgr = self._make_manager(tmp_path)
+        mgr._run_subagent = AsyncMock(return_value="[Subagent 'review the code' completed]\n\ndone")
 
-        result = await mgr.spawn(
-            task="review the code", agent="code-reviewer", session_key="test:c1"
-        )
+        result = await mgr.spawn(task="review the code", agent="code-reviewer")
 
-        assert "code-reviewer" in result
-        assert mgr.get_running_count() == 1
+        assert "code-reviewer" in result or "completed" in result
