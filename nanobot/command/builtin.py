@@ -11,6 +11,45 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.command.router import CommandContext, CommandRouter
 from nanobot.utils.helpers import build_context_content, build_status_content
 
+_INIT_PROMPT = """\
+Create or update `AGENTS.md` in the current working directory.
+
+Goal: a compact instruction file that helps future nanobot sessions avoid
+mistakes and ramp up quickly. Every line should answer: "Would an agent
+likely miss this without help?" If not, leave it out.
+
+## How to investigate
+
+Read highest-value sources first:
+- README*, root manifests (pyproject.toml, package.json, Cargo.toml, go.mod, etc.)
+- build, test, lint, formatter, typecheck config
+- CI workflows (.github/workflows/, .gitlab-ci.yml, etc.)
+- existing instruction files (AGENTS.md, CLAUDE.md, .cursor/rules/)
+
+If architecture is still unclear, read a few representative code files to find
+real entrypoints, package boundaries, and execution flow.
+
+## What to extract
+
+- exact developer commands, especially non-obvious ones
+- how to run a single test or focused verification step
+- required command order (e.g. lint → typecheck → test)
+- monorepo boundaries and major directory ownership
+- framework/toolchain quirks: generated code, migrations, special env vars
+- repo-specific conventions that differ from defaults
+- testing quirks: fixtures, prerequisites, flaky suites
+
+## Writing rules
+
+Include only high-signal, repo-specific guidance.
+Exclude: generic advice, long tutorials, obvious conventions, unverified claims.
+Prefer short sections and bullets. When in doubt, omit.
+
+If `AGENTS.md` already exists in the current directory, improve it in place — \
+preserve verified useful guidance, delete stale claims, reconcile with current codebase.
+Write the file using the write_file tool.\
+"""
+
 
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     """Cancel all active tasks and subagents for the session."""
@@ -255,6 +294,27 @@ async def cmd_mcp(ctx: CommandContext) -> OutboundMessage:
     )
 
 
+async def cmd_init(ctx: CommandContext) -> OutboundMessage:
+    """Analyze the current project and create/update AGENTS.md in CWD."""
+    from nanobot.bus.events import InboundMessage
+
+    msg = ctx.msg
+    init_msg = InboundMessage(
+        channel=msg.channel,
+        sender_id=msg.sender_id,
+        chat_id=msg.chat_id,
+        content=_INIT_PROMPT,
+        metadata=msg.metadata,
+    )
+    await ctx.loop.bus.publish_inbound(init_msg)
+    return OutboundMessage(
+        channel=msg.channel,
+        chat_id=msg.chat_id,
+        content="Analyzing project...",
+        metadata={"render_as": "text"},
+    )
+
+
 async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     """Return available slash commands."""
     lines = [
@@ -267,6 +327,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
         "/skills — List available skills",
         "/agents — List custom subagents",
         "/mcp — List MCP servers and tools",
+        "/init — Generate/update AGENTS.md for current project",
         "/help — Show available commands",
     ]
     return OutboundMessage(
@@ -288,4 +349,5 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/skills", cmd_skills)
     router.exact("/agents", cmd_agents)
     router.exact("/mcp", cmd_mcp)
+    router.exact("/init", cmd_init)
     router.exact("/help", cmd_help)

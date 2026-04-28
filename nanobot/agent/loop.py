@@ -93,7 +93,7 @@ class AgentLoop:
         self._config = config
 
         self.plugin_manager = PluginManager()
-        self.context = ContextBuilder(workspace, timezone=timezone)
+        self.context = ContextBuilder(workspace, timezone=timezone, cwd=Path.cwd())
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider, debug_dir=workspace / "debug")
@@ -199,6 +199,7 @@ class AgentLoop:
                 self.workspace,
                 timezone=getattr(self.context, "timezone", None),
                 extra_skill_dirs=self.plugin_manager.extra_skill_dirs,
+                cwd=self.context._cwd,
             )
             logger.info(
                 "Plugin extra skill dirs: {}",

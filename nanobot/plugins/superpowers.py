@@ -45,17 +45,23 @@ class SuperpowersPlugin(Plugin):
 
     async def initialize(self, plugin_input: PluginInput) -> PluginHooks:
         skills_dir = _find_skills_dir()
-        if skills_dir is None:
-            log.warning(
-                "superpowers plugin: skills directory not found. "
-                "Set NANOBOT_SUPERPOWERS_DIR to the superpowers root."
-            )
-        else:
-            log.info("superpowers plugin: skills dir = %s", skills_dir)
 
         async def config_hook(cfg) -> None:
+            nonlocal skills_dir
+            # If not found via env var, look in cfg.plugins.extra_skill_dirs
             if skills_dir is None:
+                for d in getattr(getattr(cfg, "plugins", None), "extra_skill_dirs", []):
+                    p = Path(d).expanduser()
+                    if (p / "using-superpowers" / "SKILL.md").exists():
+                        skills_dir = p
+                        break
+            if skills_dir is None:
+                log.warning(
+                    "superpowers plugin: skills directory not found. "
+                    "Set NANOBOT_SUPERPOWERS_DIR or add the path to extraSkillDirs."
+                )
                 return
+            log.info("superpowers plugin: skills dir = %s", skills_dir)
             if not hasattr(cfg, "_extra_skill_dirs"):
                 cfg._extra_skill_dirs = []
             if str(skills_dir) not in cfg._extra_skill_dirs:
@@ -95,45 +101,12 @@ class SuperpowersPlugin(Plugin):
 # ---------------------------------------------------------------------------
 
 def _find_skills_dir() -> Path | None:
-    """Locate the superpowers skills directory using auto-discovery."""
-    candidates: list[Path] = []
-
-    # 1. Explicit env var
+    """Locate the superpowers skills directory from NANOBOT_SUPERPOWERS_DIR env var."""
     env_dir = os.environ.get("NANOBOT_SUPERPOWERS_DIR")
-    if env_dir:
-        candidates.append(Path(env_dir).expanduser())
-
-    # 2. Claude Code plugin cache: ~/.claude/plugins/cache/claude-plugins-official/superpowers/<version>/
-    cache_root = Path.home() / ".claude" / "plugins" / "cache" / "claude-plugins-official" / "superpowers"
-    if cache_root.exists():
-        versions = sorted(
-            (d for d in cache_root.iterdir() if d.is_dir()),
-            key=lambda d: _version_key(d.name),
-            reverse=True,
-        )
-        candidates.extend(versions)
-
-    # 3. Common dev location
-    candidates.append(Path.home() / "PycharmProjects" / "superpowers")
-
-    for root in candidates:
-        skills = root / "skills"
-        if skills.exists() and skills.is_dir():
-            return skills
-
-    return None
-
-
-def _version_key(v: str) -> tuple[int, ...]:
-    """Convert a semver string like '5.0.7' to a sortable tuple."""
-    parts = re.split(r"[.\-]", v)
-    result = []
-    for p in parts:
-        try:
-            result.append(int(p))
-        except ValueError:
-            result.append(0)
-    return tuple(result)
+    if not env_dir:
+        return None
+    skills = Path(env_dir).expanduser() / "skills"
+    return skills if skills.exists() and skills.is_dir() else None
 
 
 def _strip_frontmatter(content: str) -> str:

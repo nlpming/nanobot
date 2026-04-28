@@ -13,6 +13,14 @@ from nanobot.agent.skills import SkillsLoader
 from nanobot.utils.helpers import build_assistant_message, detect_image_mime
 
 
+def _is_relative_to(path: Path, base: Path) -> bool:
+    try:
+        path.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
 class ContextBuilder:
     """Builds the context (system prompt + messages) for the agent."""
 
@@ -24,9 +32,11 @@ class ContextBuilder:
         workspace: Path,
         timezone: str | None = None,
         extra_skill_dirs: list[Path] | None = None,
+        cwd: Path | None = None,
     ):
         self.workspace = workspace
         self.timezone = timezone
+        self._cwd = (cwd or Path.cwd()).resolve()
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace, extra_dirs=extra_skill_dirs)
 
@@ -130,9 +140,27 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
         return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
 
+    def _find_project_agents_md(self) -> Path | None:
+        """Traverse up from CWD to find the nearest AGENTS.md outside the workspace."""
+        workspace = self.workspace.resolve()
+        current = self._cwd
+        while True:
+            candidate = current / "AGENTS.md"
+            if candidate.exists() and not _is_relative_to(candidate, workspace):
+                return candidate
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+        return None
+
     def _load_bootstrap_files(self) -> str:
-        """Load bootstrap files from workspace."""
+        """Load project AGENTS.md (from CWD) then workspace bootstrap files."""
         parts = []
+        project_agents = self._find_project_agents_md()
+        if project_agents:
+            content = project_agents.read_text(encoding="utf-8")
+            parts.append(f"## Project Instructions ({project_agents})\n\n{content}")
         for filename in self.BOOTSTRAP_FILES:
             file_path = self.workspace / filename
             if file_path.exists():
