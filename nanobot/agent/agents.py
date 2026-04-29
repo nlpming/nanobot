@@ -66,11 +66,19 @@ class AgentLoader:
         if isinstance(tools, str):
             tools = [t.strip() for t in tools.split(",") if t.strip()]
 
+        max_iterations = metadata.get("max_iterations")
+        if max_iterations is not None:
+            try:
+                max_iterations = int(max_iterations)
+            except (ValueError, TypeError):
+                max_iterations = None
+
         return {
             "name": metadata.get("name", name),
             "description": metadata.get("description", ""),
             "model": metadata.get("model") or None,
             "tools": tools if tools else None,
+            "max_iterations": max_iterations,
             "system_prompt": system_prompt,
         }
 

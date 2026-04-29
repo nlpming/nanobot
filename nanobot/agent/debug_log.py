@@ -38,7 +38,7 @@ def print_thought(content: str) -> None:
     print(f"\033[1;34m▸ Thought\033[0m {content}", flush=True)
 
 
-def print_action(name: str, arguments: dict | list) -> None:
+def print_action(name: str, arguments: dict | list, *, prefix: str | None = None) -> None:
     if isinstance(arguments, dict):
         vals = list(arguments.values())
     else:
@@ -46,7 +46,8 @@ def print_action(name: str, arguments: dict | list) -> None:
     args_str = ", ".join(str(v)[:_config.arg_val_max_len] for v in vals)
     if len(args_str) > _config.arg_max_len:
         args_str = args_str[:_config.arg_max_len] + "…"
-    print(f"\033[1;32m▸ Action\033[0m \033[36m{name}\033[0m({args_str})", flush=True)
+    pfx = prefix or "\033[1;32m▸ Action\033[0m"
+    print(f"{pfx} \033[36m{name}\033[0m({args_str})", flush=True)
 
 
 def print_observation(name: str, result: str) -> None:

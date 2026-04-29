@@ -97,6 +97,10 @@ class AgentLoop:
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider, debug_dir=workspace / "debug")
+        subagent_max_iter = getattr(
+            getattr(config, "agents", None), "defaults", None
+        )
+        subagent_max_iter = getattr(subagent_max_iter, "subagent_max_iterations", 50) if subagent_max_iter else 50
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -105,6 +109,7 @@ class AgentLoop:
             web_proxy=web_proxy,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            max_iterations=subagent_max_iter,
         )
 
         self._running = False

@@ -308,15 +308,26 @@ async def test_loop_stream_filter_handles_think_only_prefix_without_crashing(tmp
 
 
 @pytest.mark.asyncio
-async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, monkeypatch):
+async def test_subagent_max_iterations_wraps_up_with_summary(tmp_path, monkeypatch):
     from nanobot.agent.subagent import SubagentManager
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
-        content="working",
-        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
-    ))
+
+    call_count = {"n": 0}
+
+    async def fake_chat(*, messages, tools=None, **kwargs):
+        call_count["n"] += 1
+        # If no tools provided, this is the wrap-up call — return a summary
+        if not tools:
+            return LLMResponse(content="Here is my summary of findings.", tool_calls=[])
+        # Otherwise keep calling tools
+        return LLMResponse(
+            content="working",
+            tool_calls=[ToolCallRequest(id=f"call_{call_count['n']}", name="list_dir", arguments={})],
+        )
+
+    provider.chat_with_retry = fake_chat
     mgr = SubagentManager(provider=provider, workspace=tmp_path)
 
     async def fake_execute(self, name, arguments):
@@ -326,4 +337,5 @@ async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, mon
 
     result = await mgr._run_subagent("sub-1", "do task", "label")
 
-    assert "Task completed but no final response was generated." in result
+    assert "Here is my summary of findings." in result
+    assert "completed" in result

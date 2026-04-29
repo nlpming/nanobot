@@ -32,6 +32,7 @@ class SubagentManager:
         web_proxy: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
+        max_iterations: int = 50,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -42,6 +43,7 @@ class SubagentManager:
         self.web_proxy = web_proxy
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
+        self.max_iterations = max_iterations
         self.runner = AgentRunner(provider, debug_dir=workspace / "debug")
         self.agents = AgentLoader(workspace)
 
@@ -63,7 +65,8 @@ class SubagentManager:
 
         agent_info = f" (agent: {agent})" if agent else ""
         logger.info("Subagent [{}]{} starting: {}", task_id, agent_info, display_label)
-        return await self._run_subagent(task_id, task, display_label, agent_def=agent_def)
+        quiet_label = agent or display_label
+        return await self._run_subagent(task_id, task, display_label, agent_def=agent_def, quiet_label=quiet_label)
 
     async def _run_subagent(
         self,
@@ -71,6 +74,7 @@ class SubagentManager:
         task: str,
         label: str,
         agent_def: dict | None = None,
+        quiet_label: str | None = None,
     ) -> str:
         """Execute the subagent task and return its result string."""
         try:
@@ -117,15 +121,18 @@ class SubagentManager:
                         args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                         logger.debug("Subagent [{}] executing: {} with arguments: {}", task_id, tool_call.name, args_str)
 
+            agent_max_iter = (agent_def.get("max_iterations") if agent_def else None) or self.max_iterations
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=messages,
                 tools=tools,
                 model=model,
-                max_iterations=15,
+                max_iterations=agent_max_iter,
                 hook=_SubagentHook(),
                 max_iterations_message="Task completed but no final response was generated.",
                 error_message=None,
                 fail_on_tool_error=True,
+                wrap_up_on_max_iterations=True,
+                quiet_label=quiet_label or label,
                 session_id=f"subagent_{task_id}",
             ))
 

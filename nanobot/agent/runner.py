@@ -62,6 +62,8 @@ class AgentRunSpec:
     max_iterations_message: str | None = None
     concurrent_tools: bool = False
     fail_on_tool_error: bool = False
+    wrap_up_on_max_iterations: bool = False
+    quiet_label: str | None = None
     session_id: str | None = None
     plugin_manager: "PluginManager | None" = None
 
@@ -169,10 +171,15 @@ class AgentRunner:
 
                 _thought = _extract_thought(response)
                 if _thought:
-                    print_thought(_thought)
+                    if not spec.quiet_label:
+                        print_thought(_thought)
                     await hook.on_thought(context, _thought)
-                for tc in response.tool_calls:
-                    print_action(tc.name, tc.arguments)
+                if spec.quiet_label:
+                    for tc in response.tool_calls:
+                        print_action(tc.name, tc.arguments, prefix=f"\033[1;35m▸ [{spec.quiet_label}]\033[0m")
+                else:
+                    for tc in response.tool_calls:
+                        print_action(tc.name, tc.arguments)
 
                 await hook.before_execute_tools(context)
 
@@ -188,7 +195,8 @@ class AgentRunner:
                     await hook.after_iteration(context)
                     break
                 for tool_call, result in zip(response.tool_calls, results):
-                    print_observation(tool_call.name, str(result) if result else "")
+                    if not spec.quiet_label:
+                        print_observation(tool_call.name, str(result) if result else "")
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -224,8 +232,25 @@ class AgentRunner:
             break
         else:
             stop_reason = "max_iterations"
-            template = spec.max_iterations_message or _DEFAULT_MAX_ITERATIONS_MESSAGE
-            final_content = template.format(max_iterations=spec.max_iterations)
+            if spec.wrap_up_on_max_iterations and messages:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "You've reached the tool call limit. "
+                        "Please provide your final response summarizing what you've done and found."
+                    ),
+                })
+                wrap_response = await self.provider.chat_with_retry(
+                    messages=messages, tools=[], model=spec.model,
+                )
+                final_content = hook.finalize_content(
+                    AgentHookContext(iteration=spec.max_iterations, messages=messages),
+                    wrap_response.content,
+                ) or wrap_response.content
+                stop_reason = "completed"
+            else:
+                template = spec.max_iterations_message or _DEFAULT_MAX_ITERATIONS_MESSAGE
+                final_content = template.format(max_iterations=spec.max_iterations)
 
         return AgentRunResult(
             final_content=final_content,
